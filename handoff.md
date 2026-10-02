@@ -3,6 +3,7 @@
 **Date:** 2 October 2026
 **Deadline:** demo 15 October
 **Written for:** whoever picks this up next — human or AI agent
+**Docs status:** specs reconciled with code 2 Oct. `c4c7a00`.
 
 Read [`AGENTS.md`](AGENTS.md) first. This file covers only **what state the
 code is actually in**, which is not derivable from the specs.
@@ -18,17 +19,27 @@ code is actually in**, which is not derivable from the specs.
 | Frontend typecheck | `docker compose exec -T frontend npx tsc --noEmit` | clean |
 | E2E (Playwright) | `docker compose exec -T frontend npx playwright test` | **11 passed**, ~1 flake in 5 runs (§5.1) |
 
+Re-verified in full after the documentation pass: 230 backend passed (~6m42s),
+26 component tests passed, `tsc --noEmit` clean.
+
 ---
 
 ## 2. What exists
 
-### Documentation — committed as `6eeb4dd`
+### Documentation — committed as `6eeb4dd`, reconciled in `c4c7a00`
 
 `AGENTS.md`, `PRD.md`, `roadmap.md`, `README.md`, `specs/00`–`09`,
 `specs/deferred_*.md` (4), `decisions/0001`–`0012` + README, `.gitignore`,
 `.env.example`, `handoff.md`.
 
-### Code — uncommitted
+All of the above are committed as `c4c7a00`. As part of that commit the
+spec-status lines were corrected, Definition-of-done boxes ticked, and dated
+*As built* sections appended to `specs/00`–`09` and all four `deferred_*.md`
+files. `roadmap.md` gained a §Deviations table and a §Status summary;
+`AGENTS.md` §1, `PRD.md` and `README.md` were brought in line. **The documents
+now describe the code rather than contradicting it.**
+
+### Code — committed as `c4c7a00`
 
 ```
 docker-compose.yml     db, mailpit, backend, frontend. Single-worker warning in
@@ -145,8 +156,11 @@ centrepiece test is worse than a slow one.
   (`GET /api/v1/messages`) makes this easy. It is the one auth path with no
   browser-level coverage.
 - **`AdminPage` and `IdeaFormPage`/`IdeaDetailPage` have no component tests.**
-- **Spec "Implementation status" lines all still say Not started.** All nine
-  features are implemented and tested — the docs now contradict the code.
+- **✅ Spec status lines updated.** All nine say *Implemented*, all nine have
+  ticked Definition-of-done boxes, and every spec — plus `00_conventions.md` and
+  all four `deferred_*.md` — now ends with a dated *As built* section. The
+  `roadmap.md` deviations table, `AGENTS.md` §1, `PRD.md` and `README.md` were
+  updated in the same pass. Docs now match the code.
 
 ---
 
@@ -162,8 +176,10 @@ Five, all additive. None is a bug.
 | `named volumes` for `pgdata` and `venv` | Needed for `--reload` to survive a container restart without a rebuild |
 | One WebSocket per page | Spec 06 §4 implies one registry, not one socket per component |
 
-**Reconcile these in the specs** if you want the documents to match reality:
-`specs/02` §3 and §7, `specs/05` §4, `specs/06` §4.
+**✅ Reconciled in the specs** 2 Oct 2026. Each row now has a dated *As built*
+section citing it: `specs/02` §13.1–13.2, `specs/05` §11.1, `specs/06` §10.1,
+`specs/00_conventions.md` §13.3. They are also collected in one table under
+`roadmap.md` §Deviations from this plan.
 
 ---
 
@@ -172,7 +188,7 @@ Five, all additive. None is a bug.
 | Missing | Where | Priority |
 |---|---|---|
 | Fix the live-chat flake | §5.1 | **High** — it is the demo's centrepiece test |
-| Update spec Implementation status + roadmap checkboxes | §5.2 | **High** — docs contradict code |
+| ~~Update spec Implementation status + roadmap checkboxes~~ | §5.2 | ✅ Done 2 Oct |
 | Magic-link E2E test | §5.2 | Medium |
 | `IdeaFormPage` → `useNavigate`, `Linkish` → `<Link>` | §5.2 | Low |
 | Admin / ideas component tests | §5.2 | Low |

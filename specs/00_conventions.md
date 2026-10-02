@@ -4,7 +4,9 @@
 before reading anything else. If a feature spec and this document disagree,
 this document wins — and the feature spec is wrong and should be fixed.
 
-**Status:** Not started.
+**Status:** Implemented. Every rule below is enforced in code and covered by a
+test. See *As built* §13 for the five rules that needed sharpening and the two
+traps that cost real debugging time.
 **Applies to:** every feature.
 
 ---
