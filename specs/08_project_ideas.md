@@ -9,7 +9,7 @@ connections.
 [07 — Notifications](07_notifications.md)
 **Blocks:** nothing.
 
-**Implementation status:** Not started.
+**Implementation status:** Implemented 2 Oct 2026 — see the *As built* note at the end of this document for deviations from the spec.
 
 ---
 
@@ -359,14 +359,14 @@ moderating ideas through the admin panel.
 
 ## 8. Definition of done
 
-- [ ] Author-only create / edit / delete, all tested with a third party
-- [ ] Interest is a composite PK — duplicates impossible, endpoint idempotent
-- [ ] Interest never creates a connection or thread
-- [ ] Interest notifies the author exactly once
-- [ ] Four board states render: loading, empty-filtered, empty-unfiltered, error
-- [ ] `skills_needed` is free text, not a skills join
-- [ ] `is_open` blocks new interest but never blocks withdrawal
-- [ ] Every §6 test passes
+- [x] Author-only create / edit / delete, all tested with a third party
+- [x] Interest is a composite PK — duplicates impossible, endpoint idempotent
+- [x] Interest never creates a connection or thread
+- [x] Interest notifies the author exactly once
+- [x] Four board states render: loading, empty-filtered, empty-unfiltered, error
+- [x] `skills_needed` is free text, not a skills join
+- [x] `is_open` blocks new interest but never blocks withdrawal
+- [x] Every §6 test passes
 
 ## 9. Agent notes
 
@@ -379,3 +379,45 @@ moderating ideas through the admin panel.
 - **`skills_needed` is free text on purpose.** Do not "improve" it into a join.
 - **Posting requires a complete profile.** Easy to forget; it is the point of
   the gate.
+---
+
+## 10. As built — 2 October 2026
+
+§2's free-text `skills_needed`, §4's endpoint set, §4's ownership rules and
+§6's idempotent interest are all implemented as written.
+
+### 10.1 The interest-does-not-open-a-conversation rule is tested directly
+
+§1's central constraint has a dedicated test,
+`test_interest_does_not_create_a_connection_or_thread`, which expresses
+interest and then asserts that both the thread list **and** the author's
+incoming-connections list are still empty.
+
+This is the rule most likely to be broken by a well-meaning change — routing
+interest through a connection request, or having the interest endpoint create a
+thread. Having the assertion written makes that a failing test rather than a
+subtle privacy regression.
+
+### 10.2 Interest is idempotent, not conflicting
+
+§4 specifies `201` then `200` for a repeat. The implementation uses
+`INSERT ... ON CONFLICT DO NOTHING` on the composite primary key, so a duplicate
+is structurally impossible and the endpoint reports success either way. This is
+the one place in the codebase where idempotency is preferred over conflict
+reporting, deliberately: a double-clicked button must not show someone an error
+after they successfully expressed interest.
+
+### 10.3 Admin cannot edit ideas
+
+§4's rule holds and is tested in
+[`test_admin.py`](../backend/tests/integration/test_admin.py) —
+`test_admin_cannot_edit_project_idea` asserts `403 not_idea_owner` even for a
+site admin. Idea content is the author's voice, and admin's powers are user
+management and reference data.
+
+### 10.4 Known gaps
+
+No component tests for the board, the card, or the form. The E2E suite does not
+cover ideas at all — the happy path is implemented and manually verified but
+has no browser-level test. `IdeaFormPage` still navigates with
+`window.location.href` after saving rather than `useNavigate`.

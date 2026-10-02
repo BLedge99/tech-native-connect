@@ -6,7 +6,7 @@ reliably. Everything else depends on this working.
 **Depends on:** foundations only ([roadmap](../roadmap.md) §0)
 **Blocks:** every other feature.
 
-**Implementation status:** Not started.
+**Implementation status:** Implemented 2 Oct 2026 — see the *As built* note at the end of this document for deviations from the spec.
 
 ---
 
@@ -350,14 +350,14 @@ deletion.
 
 ## 10. Definition of done
 
-- [ ] All seven endpoints implemented
-- [ ] `seed.py` creates 5 admins + realistic demo data, idempotently
-- [ ] Argon2id password hashing, hashed session tokens
-- [ ] CSRF enforced on all mutating routes
-- [ ] Unknown email and wrong password byte-identical
-- [ ] Magic link single-use, 15-minute expiry, previous token invalidated
-- [ ] Dev-only magic-link shortcut behind `APP_ENV` guard
-- [ ] Every §8 test passes
+- [x] All seven endpoints implemented
+- [x] `seed.py` creates 5 admins + realistic demo data, idempotently
+- [x] Argon2id password hashing, hashed session tokens
+- [x] CSRF enforced on all mutating routes
+- [x] Unknown email and wrong password byte-identical
+- [x] Magic link single-use, 15-minute expiry, previous token invalidated
+- [x] Dev-only magic-link shortcut behind `APP_ENV` guard
+- [x] Every §8 test passes
 
 ## 11. Agent notes
 
@@ -369,3 +369,54 @@ deletion.
   treatment. It is an enumeration rule, not a nicety.
 - **`SEED_ADMIN_PASSWORD` has no default.** Do not "temporarily" hardcode one.
 - Check `00_conventions.md` §2 before inventing any error code.
+---
+
+## 13. As built — 2 October 2026
+
+**Four deviations.** All additive; none changes the specified behaviour.
+
+### 13.1 `csrf_token` is returned by `/users/me`, `/auth/register` and `/auth/login`
+
+The session cookie is `httpOnly`, so JavaScript cannot read it. The client
+therefore has no way to learn the CSRF token except from a response body. This
+spec only listed `/users/me`.
+
+Without it there is a window — up to a second after signup — in which the
+client has a session but no token, and **every mutating request fails `403`**.
+Two bugs shipped in that window during implementation: registration appeared
+broken entirely, and logout silently did nothing.
+
+`GET /users/me` returns `MeOut`, a `UserPrivate` plus `csrf_token`. The two auth
+endpoints return the same shape via `_session_body()` in
+[`routers/auth.py`](../backend/app/routers/auth.py), which reads
+`session.csrf_token` — **not** the session token.
+
+### 13.2 Admin accounts use `@bootcamp.example.com`, not `@bootcampconnect.local`
+
+`EmailStr` rejects `.local`, so the address in §7 returns `422` on login and no
+admin could ever sign in. `seed.py` uses the reserved `example.com` domain,
+which can never be a real address. Five accounts, unchanged otherwise.
+
+### 13.3 `POST /auth/register` returns `201` and logs the user in
+
+As specified in §4. Worth restating because the frontend depends on it: the
+response *is* the session, so registration is a single round trip.
+
+### 13.4 `REVALIDATE` the session after login
+
+Not a spec change — an implementation rule worth recording. The initial
+`GET /users/me` fires on app mount and can resolve *after* a fast login, writing
+a stale `null` session over the new one. `useSessionState()` guards this with a
+`sessionGeneration` ref, and `adopt()` (used by register and login) bumps it so an
+in-flight check cannot undo the session it raced.
+
+**Test coverage:** 26 backend tests in `tests/unit/test_auth.py` and
+`tests/integration/test_permissions.py` covering password hashing, token hashing
+at rest, CSRF, email normalisation, byte-identical enumeration responses, magic
+link single-use, and session expiry. 4 E2E tests covering the pitch page,
+wrong-password inline error, deep-link return, and duplicate-email rejection.
+
+**Known gap:** the magic link flow has **no E2E test**. `POST /magic-link` and
+the Mailpit container are covered by backend tests, but nothing follows the link
+in a browser. Mailpit's REST API makes this easy and it is the one auth path
+without browser-level coverage.

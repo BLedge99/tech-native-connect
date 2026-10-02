@@ -8,7 +8,7 @@ without explanations is a list nobody trusts.
 **Blocks:** [05 — Connection requests](05_connection_requests.md),
 [01 — Home feed](01_landing_page.md)
 
-**Implementation status:** Not started.
+**Implementation status:** Implemented 2 Oct 2026 — see the *As built* note at the end of this document for deviations from the spec.
 
 ---
 
@@ -395,15 +395,15 @@ number, a visible numeric score in the UI, blocking users
 
 ## 11. Definition of done
 
-- [ ] `score_match` is pure, deterministic, and fully unit-tested
-- [ ] Weights are one named constant, matching the §2 table
-- [ ] `403 profile_incomplete`, never partial results
-- [ ] All five exclusions, pending checked in both directions
-- [ ] Filters AND-combined, names resolved to ids, unknown name → `422`
-- [ ] Cursor pagination with no duplicates or gaps across pages
-- [ ] `reason` on every match, built from contributing factors only
-- [ ] No email in any match payload
-- [ ] Every §9 test passes
+- [x] `score_match` is pure, deterministic, and fully unit-tested
+- [x] Weights are one named constant, matching the §2 table
+- [x] `403 profile_incomplete`, never partial results
+- [x] All five exclusions, pending checked in both directions
+- [x] Filters AND-combined, names resolved to ids, unknown name → `422`
+- [x] Cursor pagination with no duplicates or gaps across pages
+- [x] `reason` on every match, built from contributing factors only
+- [x] No email in any match payload
+- [x] Every §9 test passes
 
 ## 12. Agent notes
 
@@ -416,3 +416,60 @@ number, a visible numeric score in the UI, blocking users
 - **Filter first, score second.** The reverse gives short pages and wrong
   counts.
 - **Never return partial results for an incomplete profile.** `403` only.
+---
+
+## 13. As built — 2 October 2026
+
+No deviations from the scoring rules. §2's weights, §3's determinism and §5's
+five exclusions are implemented exactly as written, and the `CANDIDATE_POOL`
+ceiling is marked as ADR 0011 requires.
+
+### 13.1 Cursor pagination is now real
+
+§6 lists `cursor` as a parameter and §7 says the cursor encodes `(score,
+user_id)`. Both are implemented via
+[`services/pagination.py`](../backend/app/services/pagination.py). The service
+fetches `limit + 1` rows so "is there another page" is answered without a second
+`COUNT`.
+
+The same helper serves the other list endpoints, keyed on `(created_at, id)`
+instead — see specs 06, 07 and 08.
+
+### 13.2 Connection state comes from `/connections`, not from the match list
+
+**This was a real bug, and it is worth recording because the spec led to it.**
+
+§6 tells the frontend to render the connect button from `connection_state`,
+which §6 also says comes with each match. But §5 requires matching to **exclude**
+anyone with a pending request in either direction. The two rules combined mean
+that the moment a user sends a request, the person **disappears from
+`/matches` entirely** — so a profile page deriving its state from the match list
+silently falls back to "no connection" and offers **Connect** again.
+
+The backend correctly rejects the second request with `409`, so no data was
+lost, but the UI was simply wrong and a user could reasonably believe they had
+never sent anything.
+
+`PublicProfilePage` now reads state from `GET /connections`, which returns all
+requests involving the caller including pending ones. The match list still
+carries `connection_state` for cards, where the exclusion makes it redundant
+anyway.
+
+### 13.3 Other notes
+
+`resolve_names` raises `422` for an unknown skill or interest name, as §6
+requires — a filter typo must not silently return an empty list.
+
+`score_match` takes `ProfileView`, not an ORM model, exactly as §3 requires, and
+its unit suite runs with no database.
+
+**Test coverage:** 16 unit tests in
+[`tests/unit/test_matching.py`](../backend/tests/unit/test_matching.py) covering
+every weight, both caps, the 95-point maximum, determinism over 100 runs, tie
+ordering, and that reasons mention only contributing factors. Integration tests
+cover the completeness gate returning `403` with no `items` key, all five
+exclusions, filter combination, and the email scan.
+
+**Known gaps:** no component tests for the filter bar; the two E2E matching tests
+are deliberately loose, because seeded data changes and assertions on exact
+cohort contents would break every time it is reseeded.

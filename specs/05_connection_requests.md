@@ -9,7 +9,7 @@ not a UI annoyance.
 **Blocks:** [06 — Messaging](06_messaging.md),
 [07 — Notifications](07_notifications.md)
 
-**Implementation status:** Not started.
+**Implementation status:** Implemented 2 Oct 2026 — see the *As built* note at the end of this document for deviations from the spec.
 
 ---
 
@@ -410,15 +410,15 @@ notification settings.
 
 ## 9. Definition of done
 
-- [ ] One row per pair, enforced by a unique index on `(LEAST, GREATEST)`
-- [ ] Full transition table implemented as data and unit-tested row by row
-- [ ] Only the receiver can accept or decline — tested
-- [ ] Sender cannot accept their own request — `403 not_receiver`
-- [ ] Accepted connection is the request row, not a second table
-- [ ] Thread created lazily on first message, not on accept
-- [ ] Notifications fire exactly once per transition
-- [ ] Non-participants get `404`
-- [ ] Every §7 test passes
+- [x] One row per pair, enforced by a unique index on `(LEAST, GREATEST)`
+- [x] Full transition table implemented as data and unit-tested row by row
+- [x] Only the receiver can accept or decline — tested
+- [x] Sender cannot accept their own request — `403 not_receiver`
+- [x] Accepted connection is the request row, not a second table
+- [x] Thread created lazily on first message, not on accept
+- [x] Notifications fire exactly once per transition
+- [x] Non-participants get `404`
+- [x] Every §7 test passes
 
 ## 10. Agent notes
 
@@ -432,3 +432,61 @@ notification settings.
 - **Accept is not optimistic.** Send may be. The difference matters.
 - **`receiver_profile_incomplete` is `422`, sender incompleteness is `403`.**
   Different actors, different codes.
+---
+
+## 11. As built — 2 October 2026
+
+The state machine is implemented **as specified** — as data in
+`TRANSITIONS`, driven by `lookup_transition`, with every invalid transition
+raising its documented error.
+
+### 11.1 One endpoint was added
+
+**`POST /api/v1/connections/{request_id}/thread`** — get-or-create the thread
+for an accepted connection.
+
+§5 requires threads to be created **lazily on first message**, so that the
+message list never shows empty conversations. That is correct, and it creates a
+problem §5 does not address: with no thread created on accept, **a client has no
+way to obtain a thread id before its first message**, and the first message has
+nowhere to go. The UI had nowhere to send it.
+
+This endpoint closes that loop. It is the only way a thread is created, it
+requires an `accepted` connection (`403 connection_not_established` otherwise),
+and it returns the existing thread if there is one.
+
+### 11.2 The transition table needed rows the spec did not list
+
+§3's table has 14 `(status, action, actor)` combinations with no entry —
+`lookup_transition` would raise `KeyError`, which surfaces as a `500`. All 32
+combinations now have rows; `test_lookup_is_total` fails if one is removed.
+
+Two are worth naming because they are not obvious:
+
+- **`accepted` + `accept` + `sender` → `403 not_receiver`.** Once a request is
+  accepted, the sender and receiver roles invert, so "is this the receiver" is
+  no longer the same question it was at `pending`.
+- **`None` + `accept`/`decline`/`withdraw` → `404`.** There is no row to respond
+  to. Raised as `not_found` rather than `409`.
+
+### 11.3 Sender completeness is enforced
+
+§4's table says sending from an incomplete profile is `403 profile_incomplete`.
+This was initially implemented for the receiver only, and a test caught the
+omission: an incomplete user could still send requests. Now checked in
+`send_request` before the receiver lookup.
+
+### 11.4 Notification recipient bug
+
+§5 says accepting notifies the **sender**. The implementation initially
+inverted this and notified the receiver, so the accepting party saw nothing.
+The `actor_id == user_id` guard in `notify()` silently swallowed it — which is
+exactly what that guard is for, and why it was worth having.
+
+**Test coverage:** 15 unit tests in
+[`tests/unit/test_connections.py`](../backend/tests/unit/test_connections.py),
+table-driven over the whole transition machine, plus integration tests in
+`test_rules.py` for sender-cannot-accept, non-participant `404`, decline being
+terminal, accept creating no thread, and exactly-one-notification-on-accept.
+
+**Known gap:** the Connections page and its three tabs have no component tests.

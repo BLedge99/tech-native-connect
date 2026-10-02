@@ -6,7 +6,7 @@ the app depends on, and see who is using it.
 **Depends on:** [03 — Profiles](03_profiles.md), [02 — Registration](02_registration_and_login.md)
 **Blocks:** nothing. **Most cuttable feature** — see [`roadmap.md`](../roadmap.md) §Cut line.
 
-**Implementation status:** Not started.
+**Implementation status:** Implemented 2 Oct 2026 — see the *As built* note at the end of this document for deviations from the spec.
 
 ---
 
@@ -282,15 +282,15 @@ managing project ideas, cohort roster import from an LMS.
 
 ## 7. Definition of done
 
-- [ ] `get_current_admin` on every route, one auth test per route
-- [ ] Non-admin → `403` (not `404`) — admin panel is not secret
-- [ ] Cannot deactivate self or remove the last admin
-- [ ] Deleting a skill in use → `409` with the count; renaming always works
-- [ ] Reference-data mutations invalidate the public cache
-- [ ] Every admin read of user data audited, in the same transaction
-- [ ] Admin **cannot** edit profiles or project ideas
-- [ ] No charts — four counts
-- [ ] Every §5 test passes
+- [x] `get_current_admin` on every route, one auth test per route
+- [x] Non-admin → `403` (not `404`) — admin panel is not secret
+- [x] Cannot deactivate self or remove the last admin
+- [x] Deleting a skill in use → `409` with the count; renaming always works
+- [x] Reference-data mutations invalidate the public cache
+- [x] Every admin read of user data audited, in the same transaction
+- [x] Admin **cannot** edit profiles or project ideas
+- [x] No charts — four counts
+- [x] Every §5 test passes
 
 ## 8. Agent notes
 
@@ -306,3 +306,52 @@ managing project ideas, cohort roster import from an LMS.
   allowed; a PATCH body invites the wrong thing.
 - **This is the first thing to cut** if you are behind. Keep `seed.py` so the
   admin logins still work with no panel.
+---
+
+## 10. As built — 2 October 2026
+
+§3's endpoint verbs, §3's delete-in-use guard, §2's same-transaction auditing
+and §4's four tabs are all implemented as written.
+
+### 10.1 One auth test per route, and a boundary that is enforced
+
+§5's headline requirement is implemented as a parametrised test over the full
+list of admin read routes plus the write routes, so adding an admin endpoint
+without adding it to `ADMIN_READ_ROUTES` is a visible gap rather than an
+unnoticed one.
+
+§1's boundary — admin manages the substrate, not other people's content — is
+tested from both directions:
+
+- `test_admin_cannot_edit_user_profile` — no method against `/users/{id}`
+  succeeds, for an admin.
+- `test_admin_cannot_edit_project_idea` — `403 not_idea_owner`.
+- `test_admin_cannot_read_someone_elses_messages` — no such endpoint exists.
+
+### 10.2 Audit rows roll back with the action
+
+§2 requires the audit row to be written in the same transaction.
+`test_failed_admin_action_leaves_no_audit_row` proves it: deactivating yourself
+returns `422`, and the audit log is unchanged.
+
+`test_audit_does_not_log_plain_listing` covers §4's "boring on purpose" — the
+log records `view_user` for a specific user but not a list request, which would
+otherwise bury the entries that matter.
+
+### 10.3 The last-admin guard
+
+§3 requires it. `test_cannot_remove_the_last_admin` asserts `409 last_admin`.
+An app with no way back in is a demo over, and this is two lines.
+
+### 10.4 Delete-in-use message
+
+§3's message names the skill. The API returns the **count** instead
+(`"This skill is on 12 profiles. Rename it instead."`) and the UI resolves the
+name from the skill row it already has. The count is the more useful half; the
+name was redundant in context.
+
+### 10.5 Known gaps
+
+`AdminPage.tsx` has no component tests. The reference-data editors, the users
+table and the audit log are all unverified at the browser level; only the API
+beneath them is covered.

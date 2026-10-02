@@ -249,3 +249,24 @@ the other user still sees their messages.
   §2 above.
 - **Build this last of anything.** It touches every screen and it is the only
   feature here that is genuinely hard to take back.
+
+---
+
+## As built — 2 October 2026
+
+**Not built. Nothing in this file exists.** One finding worth recording, because
+it changes what this feature would have to touch:
+
+**The claim in §"The enforcement gap to watch" is real and was independently
+rediscovered during implementation.** The profile page derived connection state
+from `GET /matches`, which excludes anyone with a pending request — so a user
+who had just sent one was shown as having no connection. That bug exists in the
+current code and was fixed by reading state from `GET /connections` instead
+(see [`04_matching_and_search.md`](04_matching_and_search.md) §13.2).
+
+`discoverable = false` would have to be enforced in the **same place** — the
+matching service's candidate query — for the same reason. There is now a
+written precedent for where that goes.
+
+No other part of this spec was built. The `reports` table in §Part 3 does not
+exist.

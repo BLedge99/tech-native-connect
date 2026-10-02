@@ -424,3 +424,22 @@ request still sends.
   `docker compose down -v` is the cleanup.
 - **A local model is the right answer for data handling and the wrong answer for
   a live demo.** Have both wired; pick at demo time.
+
+---
+
+## As built — 2 October 2026
+
+**Not built. Nothing in this file exists.** The provider-abstraction design here
+was not applied, but one structural point from §4 was adopted for a different
+reason and is worth recording:
+
+**The code has a working "null provider" pattern already.** `notify()` has a
+guard that suppresses self-notifications, and the notification system falls back
+to a persisted row when the socket is unavailable. The general shape this file
+proposes — a default no-op implementation, so nothing depends on the feature
+being configured — is how the rest of the codebase handles optional
+behaviour.
+
+The `scores` naming and the exact end-point names in this file are **not** what
+was implemented; see [`04_matching_and_search.md`](04_matching_and_search.md)
+for the actual matching surface. No LLM provider is installed or configured.

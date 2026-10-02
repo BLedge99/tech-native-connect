@@ -10,24 +10,24 @@ business developers want someone who can build the thing they keep describing.
 This app lists the people on your course, ranks the ones you overlap with, and
 tells you why.
 
-**Status:** specification complete, implementation not started. Demo target
-15 October 2026.
+**Status:** all nine features implemented, 2 October 2026. 230 backend tests,
+26 component tests, 11 E2E tests. Demo target 15 October 2026.
 
 ---
 
-## Documentation first
+## Documentation
 
-This repository is currently **documentation only**. No application code has
-been written yet. The spec set is the deliverable for week one, and it is
-designed to be handed to a human developer or an AI agent with no further
-context.
+Every feature listed below is implemented, and every spec carries an *As
+built* section recording where the build differs from what was specified — so
+these documents describe the code, not an aspiration.
 
 | Start here | What it gives you |
 |---|---|
-| **[`AGENTS.md`](AGENTS.md)** | **Read this first.** Tech stack, conventions, the six non-negotiable product rules, how to pick up a feature. |
+| **[`AGENTS.md`](AGENTS.md)** | **Read this first.** Tech stack, conventions, the six non-negotiable product rules, how to work. |
+| **[`handoff.md`](handoff.md)** | Live build state, known bugs, and the gotchas that will cost you an hour. |
 | [`PRD.md`](PRD.md) | Who the app serves, what it does, what is in and out of scope, success criteria. |
 | [`roadmap.md`](roadmap.md) | The nine features in dependency order, each with a finish line, plus the cut line. |
-| [`specs/`](specs/) | One document per feature. Everything an implementer needs, including the tests to write. |
+| [`specs/`](specs/) | One document per feature, each ending with an *As built* section. |
 | [`decisions/`](decisions/) | Twelve architecture decision records. Start at [0001](decisions/0001-fastapi-and-react.md). |
 
 ### The demo path
@@ -124,15 +124,32 @@ docker compose down -v             # reset, destroys data
 Mailpit is a local fake mail server — no real email is ever sent. Magic links
 land in the web inbox.
 
+## Tests
+
+```bash
+docker compose exec -T backend pytest tests                      # 230 passed
+docker compose exec -T frontend npx vitest run                   # 26 passed
+docker compose exec -T frontend npx tsc --noEmit                 # clean
+docker compose exec -T frontend npx playwright test              # 11 passed
+```
+
+The E2E suite resets the demo data before each run. **Restart the frontend
+container after editing frontend source** — Vite's hot reload does not reliably
+pick up changes on this setup.
+
 ## Working on it
 
-1. Read [`specs/00_conventions.md`](specs/00_conventions.md). It holds the error
+1. Read [`handoff.md`](handoff.md) — it has the gotchas that will cost you an
+   hour otherwise.
+2. Read [`specs/00_conventions.md`](specs/00_conventions.md). It holds the error
    shape, auth guards, pagination and naming that every spec assumes.
-2. Read your feature's spec. Features are numbered in **dependency** order — do
+3. Read your feature's spec. Features are numbered in **dependency** order — do
    not start one whose prerequisite is unfinished.
-3. Branch `feat/<spec-number>-<slug>`, e.g. `feat/03-profiles`.
-4. Backend → frontend → tests. **Tests are part of done.**
-5. Open a PR referencing the spec number.
+4. Branch `feat/<spec-number>-<slug>`, e.g. `feat/03-profiles`.
+5. Backend → frontend → tests. **Tests are part of done.**
+6. Open a PR referencing the spec number.
+7. **If your implementation differs from the spec, write it into the spec.** Add
+   an *As built* section. Do not leave it only in the code.
 
 Work is not pre-assigned. Take the feature nobody has started.
 
@@ -147,14 +164,19 @@ feat/04-matching
 ```
 .
 ├── AGENTS.md            entry point for humans and AI agents
+├── handoff.md           live build state, known bugs, gotchas
 ├── PRD.md               what the product is
-├── roadmap.md           what to build, in what order
+├── roadmap.md           what to build, in what order, and what is built
 ├── specs/               one doc per feature, plus deferred_*.md
 ├── decisions/           numbered ADRs
-├── backend/             FastAPI + SQLAlchemy + Alembic   (not yet created)
-├── frontend/            Vite + React + TypeScript        (not yet created)
-├── e2e/                 Playwright                        (not yet created)
-└── docker-compose.yml                                   (not yet created)
+├── backend/             FastAPI + SQLAlchemy + Alembic + pytest
+│   ├── app/             config, models, routers, services, realtime
+│   ├── alembic/         migrations — 0001_initial, hand-written
+│   └── tests/           unit/ and integration/
+├── frontend/            Vite + React + TypeScript + Tailwind
+│   ├── src/             api/, hooks/, components/, pages/, routes/
+│   └── tests/           Playwright E2E and its global setup
+└── docker-compose.yml   db, mailpit, backend, frontend
 ```
 
 ## Decisions worth knowing about

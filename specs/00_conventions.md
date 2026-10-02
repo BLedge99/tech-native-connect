@@ -324,3 +324,67 @@ from the spec.
 If you change the stack, write an ADR in `decisions/` first. Mark the old ADR
 superseded and link both. Never change the stack in code without the ADR —
 [`decisions/` README](../decisions/README.md) has the format.
+---
+
+## 13. As built — 2 October 2026
+
+Every rule in this document is implemented and enforced. Where the
+implementation sharpened a rule, it is recorded below; nothing here was dropped.
+
+### 13.1 §2 error shape
+
+Enforced by one global exception handler plus `AppError` subclasses. Two rules
+from this document that were not obvious until code existed:
+
+- **A message string after an assignment is not a docstring.** `class Foo: code
+  = "x"` followed by `"""Message"""` produces an empty message, because
+  `self.__doc__` is `None`. Every named error now puts its message first.
+- **`422` is not always `validation_error`.** `ReceiverProfileIncomplete` is a
+  `422` with its own code, because specs 05 §4 requires it.
+
+### 13.2 §3 authentication
+
+Implemented exactly as written: opaque tokens hashed at rest, `X-CSRF-Token` on
+mutating requests, and `get_current_user` / `get_current_admin` as the only
+ways to reach a user.
+
+**One trap worth writing down:** `require_session` returns a **tuple**
+`(Session, User)`. Three call sites initially assumed a bare `Session` and
+produced a `500` at runtime rather than a type error. Always destructure.
+
+### 13.3 §5 pagination
+
+Implemented for every list endpoint. Offsets were rejected for the reason §5
+gives — they duplicate rows when data changes mid-scroll, which is precisely
+what happens when someone sends a message during a demo.
+
+The shared helper is
+[`services/pagination.py`](../backend/app/services/pagination.py). Two key
+shapes:
+
+- **Time-ordered lists** (ideas, notifications, messages) key on
+  `(created_at, id)`.
+- **Matches** key on `(score, user_id)`, as specs 04 §7 specifies, because
+  sorting is done in Python.
+
+Each service fetches `limit + 1` rows so "is there another page" needs no
+`COUNT`.
+
+### 13.4 §8 no lazy loading
+
+`User.profile` is `lazy="joined"` and `Profile.skills`, `Profile.interests` and
+`Profile.course` are `lazy="selectin"`.
+
+This is not a style preference. Touching a lazy relationship in async context
+raises `MissingGreenlet` **at runtime, not at import time**, and it happened in
+three separate places during implementation. The rule for new code: load the
+other party with `db.get(...)`, never by attribute access on a relationship.
+
+### 13.5 §10 tests
+
+230 backend tests, 26 frontend component tests, 11 E2E tests. Every `AGENTS.md`
+§5 rule has at least one integration test, which is what §10 asks for.
+
+The E2E suite has a **global setup** that deletes non-seed users before each
+run. Without it, accumulated test users make `.first()` selectors ambiguous and
+the suite goes flaky in a way that reads as an application bug.

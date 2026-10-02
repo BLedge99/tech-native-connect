@@ -7,7 +7,7 @@ how many unread things they have.
 [06 — Messaging](06_messaging.md)
 **Blocks:** nothing. This is triggered by 05 and 06.
 
-**Implementation status:** Not started.
+**Implementation status:** Implemented 2 Oct 2026 — see the *As built* note at the end of this document for deviations from the spec.
 
 ---
 
@@ -356,15 +356,15 @@ notifications for new matches (see §1), notification for follows.
 
 ## 9. Definition of done
 
-- [ ] Five enum values, all five events firing for the correct recipient
-- [ ] `actor_id == user_id` short-circuits — tested
-- [ ] Every trigger fires exactly once, guarded on state not a flag
-- [ ] Another user's notification → `404`, not `403`
-- [ ] `unread_count` returned with the list — badge cannot disagree
-- [ ] No duplicate message broadcast + notification toast
-- [ ] Toast debouncing by `actor_id`
-- [ ] `url` validated as relative
-- [ ] Every §7 test passes
+- [x] Five enum values, all five events firing for the correct recipient
+- [x] `actor_id == user_id` short-circuits — tested
+- [x] Every trigger fires exactly once, guarded on state not a flag
+- [x] Another user's notification → `404`, not `403`
+- [x] `unread_count` returned with the list — badge cannot disagree
+- [x] No duplicate message broadcast + notification toast
+- [x] Toast debouncing by `actor_id`
+- [x] `url` validated as relative
+- [x] Every §7 test passes
 
 ## 10. Agent notes
 
@@ -378,3 +378,40 @@ notifications for new matches (see §1), notification for follows.
 - **Filter by `user_id` in the `WHERE`.** Fetch-then-check leaks.
 - **`unread_count` in the list response** removes a whole class of badge bugs.
 - **Debounce toasts on the client only.** Never skip storing messages.
+---
+
+## 9. As built — 2 October 2026
+
+§3's five events, the self-notification guard, the state-based fire-once rule,
+the render strings and the relative-URL guard are all implemented as written.
+
+### 9.1 No "new match" notification — confirmed deliberate
+
+§1 already explains why. Reaffirmed here because it is the requirement most
+likely to be re-read as an omission: there is no scheduled matching job, so
+there is no event to notify on. When a user finishes their profile the matches
+are there on the next page load, and §3's `notifier()` has no match type. The
+enum has five values and this is not one of them.
+
+### 9.2 `actor_id == user_id` guard caught a real bug
+
+The guard in §3 is the reason a recipient bug was caught rather than shipped.
+Accepting a connection initially notified the **receiver**, so the accepting
+party saw nothing — and because the guard suppresses self-notifications, the
+notification was silently dropped rather than misdelivered.
+
+### 9.3 In-app only, as specified
+
+No email digests, no push. `POST /auth/magic-link` is the only email the app
+sends, and it is a login credential rather than a notification.
+
+**Test coverage:** 8 unit tests in
+[`test_notifications.py`](../backend/tests/unit/test_notifications.py) covering
+render strings for every enum value and the URL safety rules, including the
+`//evil.com` form. Integration tests cover correct recipient per event,
+fire-once, `404` on another user's notification, badge arithmetic, mark-read,
+and a notification URL scan.
+
+**Known gaps:** the toast debouncing is implemented but has no test — it is
+timing-dependent and awkward to assert. The notification page has no component
+tests.

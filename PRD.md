@@ -1,8 +1,13 @@
 # PRD — Bootcamp Connect
 
-**Status:** agreed, 1 October 2026
+**Status:** agreed 1 October 2026 · **all nine required features built 2 October 2026**
 **Demo:** 15 October 2026
 **Owner:** Ben, Joey, James, Alys, Mick
+
+Every feature in §4 is implemented and its Definition-of-done checklist is
+ticked. Each spec has an *As built* section recording where the build differs
+from what was specified; `roadmap.md` §Status summary has the test totals and
+the two gaps that remain.
 
 ---
 
