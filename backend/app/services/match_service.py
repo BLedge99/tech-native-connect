@@ -8,6 +8,7 @@ would read the whole table.
 from __future__ import annotations
 
 import base64
+import binascii
 import json
 import uuid
 from dataclasses import dataclass
@@ -17,7 +18,7 @@ from sqlalchemy import and_, exists, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.errors import ProfileIncomplete
+from app.errors import BadRequest, ProfileIncomplete
 from app.services.pagination import decode_cursor
 from app.models import (
     ConnectionRequest,
@@ -236,9 +237,12 @@ def encode_cursor(score: int, user_id: uuid.UUID) -> str:
 
 
 def decode_cursor(cursor: str) -> tuple[int, uuid.UUID]:
-    padding = "=" * (-len(cursor) % 4)
-    payload = json.loads(base64.urlsafe_b64decode(cursor + padding))
-    return int(payload["s"]), uuid.UUID(payload["u"])
+    try:
+        padding = "=" * (-len(cursor) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(cursor + padding))
+        return int(payload["s"]), uuid.UUID(payload["u"])
+    except (ValueError, TypeError, KeyError, OverflowError, binascii.Error) as exc:
+        raise BadRequest("That pagination cursor is invalid.", code="invalid_cursor") from exc
 
 
 __all__ = [

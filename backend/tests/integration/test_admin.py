@@ -8,6 +8,8 @@ Also covers the boundary — admin manages the substrate, not other people's
 content — and the audit log.
 """
 
+import uuid
+
 import pytest
 
 pytestmark = pytest.mark.anyio
@@ -91,6 +93,36 @@ async def test_admin_user_detail_includes_email(client, auth, make_user, seeded_
     response = await admin["client"].get(f"/api/v1/admin/users/{target.id}")
     assert response.status_code == 200
     assert response.json()["email"] == "target@example.com"
+
+
+async def test_admin_reference_lists_use_cursor_pagination(client, auth, seeded_refs):
+    """Every collection uses the shared cursor envelope and stable paging."""
+    admin = await auth(is_admin=True)
+    created_interest = await admin["client"].post(
+        "/api/v1/admin/interests",
+        json={"name": f"Pagination-{uuid.uuid4().hex}"},
+        headers=admin["csrf"],
+    )
+    assert created_interest.status_code == 200, created_interest.text
+
+    for path in ("courses", "skills", "interests"):
+        baseline = (await admin["client"].get(f"/api/v1/admin/{path}?limit=100")).json()
+        assert isinstance(baseline, dict) and "items" in baseline
+        malformed = await admin["client"].get(f"/api/v1/admin/{path}?cursor=not-a-cursor")
+        assert malformed.status_code == 400
+        assert malformed.json()["error"]["code"] == "invalid_cursor"
+        seen: list[str] = []
+        cursor = None
+        while True:
+            query = "?limit=1" + (f"&cursor={cursor}" if cursor else "")
+            page = (await admin["client"].get(f"/api/v1/admin/{path}{query}")).json()
+            ids = [item["id"] for item in page["items"]]
+            assert not set(ids).intersection(seen), f"{path} repeated an item across pages"
+            seen.extend(ids)
+            cursor = page["next_cursor"]
+            if cursor is None:
+                break
+        assert set(seen) == {item["id"] for item in baseline["items"]}
 
 
 async def test_non_admin_cannot_list_users(client, auth, seeded_refs):
@@ -238,7 +270,7 @@ async def test_delete_skill_in_use_rejected(client, auth, seeded_refs):
     held = (await user["client"].get("/api/v1/users/me")).json()["profile"]["skills"]
     assert held, "the fixture user should have a skill"
 
-    skills = (await admin["client"].get("/api/v1/admin/skills")).json()
+    skills = (await admin["client"].get("/api/v1/admin/skills")).json()["items"]
     in_use = next(s for s in skills if s["name"] == held[0]["name"])
     response = await admin["client"].delete(
         f"/api/v1/admin/skills/{in_use['id']}", headers=admin["csrf"]
@@ -291,7 +323,7 @@ async def test_delete_interest_in_use_rejected(client, auth, seeded_refs):
     admin = await auth(is_admin=True)
     user = await auth(is_admin=False)
 
-    interest = (await admin["client"].get("/api/v1/admin/interests")).json()[0]
+    interest = (await admin["client"].get("/api/v1/admin/interests")).json()["items"][0]
     attached = await user["client"].patch(
         "/api/v1/users/me",
         json={"interest_ids": [interest["id"]]},
@@ -435,6 +467,7 @@ async def test_overview_counts_match_reality(client, auth, make_user, seeded_ref
     await make_user()
 
     overview = (await admin["client"].get("/api/v1/admin/overview")).json()
-    listed = (await admin["client"].get("/api/v1/admin/users?limit=200")).json()["items"]
+    listed = (await admin["client"].get("/api/v1/admin/users?limit=100")).json()["items"]
     assert overview["total_users"] == len(listed)
     assert overview["total_users"] >= 3   # two admins plus the extras
+    assert (await admin["client"].get("/api/v1/admin/users?limit=101")).status_code == 422

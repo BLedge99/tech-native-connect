@@ -8,6 +8,8 @@ browsers with separate cookie jars. That is the only honest way to test a
 two-person feature.
 """
 
+import asyncio
+
 import pytest
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -128,7 +130,7 @@ async def test_thread_list_only_contains_participants(auth):
     cid = await connect(a, b)
     await open_thread(a, cid)
 
-    threads = (await c["client"].get("/api/v1/threads")).json()
+    threads = (await c["client"].get("/api/v1/threads")).json()["items"]
     for thread in threads:
         assert thread["other"]["id"] != a["id"]
         assert thread["other"]["id"] != b["id"]
@@ -162,7 +164,7 @@ async def test_accept_does_not_create_a_thread(auth):
     a = await auth(display_name="Alice")
     b = await auth(display_name="Bob")
     await connect(a, b)
-    assert (await a["client"].get("/api/v1/threads")).json() == []
+    assert (await a["client"].get("/api/v1/threads")).json()["items"] == []
 
 
 async def test_declined_pair_cannot_re_request(auth):
@@ -388,6 +390,33 @@ async def test_magic_link_for_a_real_account_returns_202(auth, client):
     response = await client.post("/api/v1/auth/magic-link", json={"email": user["email"]})
     assert response.status_code == 202, response.text
     assert response.json()["message"]
+
+
+async def test_magic_link_can_only_be_consumed_once_concurrently(auth, db):
+    """Two independent DB transactions racing on one token must yield one session."""
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from app.errors import BadRequest
+    from app.services.auth import issue_magic_link, consume_magic_link
+
+    account = await auth(display_name="Concurrent Link")
+    token = await issue_magic_link(db, account["user"])
+    await db.commit()
+    sessions = async_sessionmaker(db.bind, class_=AsyncSession, expire_on_commit=False)
+
+    async def consume():
+        async with sessions() as session:
+            try:
+                user = await consume_magic_link(session, token)
+                await session.commit()
+                return ("consumed", user.id)
+            except BadRequest as error:
+                await session.rollback()
+                return (error.code, None)
+
+    results = await asyncio.gather(consume(), consume())
+    assert sum(result[0] == "consumed" for result in results) == 1
+    assert sum(result[0] == "magic_link_used" for result in results) == 1
 
 
 async def test_profile_field_length_caps(auth):
@@ -639,3 +668,55 @@ async def test_messages_persist_across_a_reload(auth):
 
     history = (await a["client"].get(f"/api/v1/threads/{tid}/messages")).json()["items"]
     assert any(m["body"] == "persisted" for m in history)
+
+async def test_thread_and_connection_lists_page_by_cursor(auth):
+    """specs/00_conventions.md §5: every list endpoint, no exceptions. Page 2
+    must not repeat page 1 — which needs a tiebreaker, not just a timestamp."""
+    a = await auth(display_name="Alice")
+    b = await auth(display_name="Bob")
+
+    empty_connection_ids = []
+    for name in ("Dan", "Eve", "Fay"):
+        other = await auth(display_name=name)
+        empty_connection_ids.append(await connect(a, other))
+
+    page1 = (await a["client"].get("/api/v1/connections?limit=2")).json()
+    assert len(page1["items"]) == 2
+    assert page1["next_cursor"] is not None
+
+    page2 = (
+        await a["client"].get(f"/api/v1/connections?limit=2&cursor={page1['next_cursor']}")
+    ).json()
+    ids = {c["id"] for c in page1["items"]} & {c["id"] for c in page2["items"]}
+    assert ids == set(), "page 2 repeated rows from page 1"
+    assert page2["next_cursor"] is None
+
+    # The same guarantee for the thread list, which pages on the latest message.
+    cid = await connect(a, b)
+    tid = await open_thread(a, cid)
+    for body in ("one", "two"):
+        await b["client"].post(f"/api/v1/threads/{tid}/messages", json={"body": body}, headers=b["csrf"])
+    for empty_cid in empty_connection_ids:
+        await open_thread(a, empty_cid)
+
+    seen_thread_ids = []
+    cursor = None
+    while True:
+        query = "?limit=1" + (f"&cursor={cursor}" if cursor else "")
+        page = (await a["client"].get(f"/api/v1/threads{query}")).json()
+        page_ids = [thread["id"] for thread in page["items"]]
+        assert not set(page_ids).intersection(seen_thread_ids), "thread cursor repeated a row"
+        seen_thread_ids.extend(page_ids)
+        cursor = page["next_cursor"]
+        if cursor is None:
+            break
+    assert len(seen_thread_ids) == 4
+
+
+async def test_malformed_list_cursor_returns_client_error(auth):
+    """Untrusted cursor input must not become an internal server error."""
+    user = await auth(display_name="Cursor User")
+    for path in ("connections", "threads", "notifications", "ideas", "matches"):
+        response = await user["client"].get(f"/api/v1/{path}?cursor=not-a-cursor")
+        assert response.status_code == 400, f"{path}: {response.text}"
+        assert response.json()["error"]["code"] == "invalid_cursor"

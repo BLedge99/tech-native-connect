@@ -1,6 +1,6 @@
 /** Connections: three tabs from one endpoint. specs/05 §6. */
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { connections as connApi } from '../api/client'
 import { ApiError } from '../api/client'
@@ -14,16 +14,39 @@ export function ConnectionsPage() {
   const [params, setParams] = useSearchParams()
   const tab = (params.get('tab') as Tab) ?? 'received'
   const [reloadKey, bumpReload] = useState(0)
+  const [extraItems, setExtraItems] = useState<Connection[]>([])
+  const [nextCursor, setNextCursor] = useState<string | null>(null)
+  const [loadingMore, setLoadingMore] = useState(false)
+  const [moreError, setMoreError] = useState<string | null>(null)
   const summary = useQuery(() => connApi.summary(), [reloadKey])
 
   const query = useQuery(() => connApi.list(tab), [tab, reloadKey])
+  useEffect(() => {
+    setExtraItems([])
+    setNextCursor(query.data?.next_cursor ?? null)
+  }, [query.data])
 
   const setTab = (next: Tab) => {
     setParams({ tab: next }, { replace: true })
   }
 
-  const items = (query.data?.items ?? []) as Connection[]
+  const items = [...(query.data?.items ?? []), ...extraItems] as Connection[]
   const counts = summary.data
+
+  const loadMore = async () => {
+    if (!nextCursor || loadingMore) return
+    setLoadingMore(true)
+    setMoreError(null)
+    try {
+      const page = await connApi.list(tab, nextCursor)
+      setExtraItems((current) => [...current, ...page.items])
+      setNextCursor(page.next_cursor)
+    } catch {
+      setMoreError("Couldn't load more connections.")
+    } finally {
+      setLoadingMore(false)
+    }
+  }
 
   return (
     <div className="space-y-6">
@@ -82,6 +105,8 @@ export function ConnectionsPage() {
           </li>
         ))}
       </ul>
+      {moreError && <p role="alert" className="text-sm text-red-700">{moreError}</p>}
+      {nextCursor && <button className="text-sm text-brand-700 underline" onClick={loadMore} disabled={loadingMore}>{loadingMore ? 'Loading…' : 'Load more'}</button>}
     </div>
   )
 }

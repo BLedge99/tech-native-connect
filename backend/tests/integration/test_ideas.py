@@ -276,7 +276,7 @@ async def test_interest_does_not_create_a_connection_or_thread(client, auth, see
         f"/api/v1/ideas/{created['id']}/interest", headers=developer["csrf"]
     )
 
-    assert (await developer["client"].get("/api/v1/threads")).json() == []
+    assert (await developer["client"].get("/api/v1/threads")).json()["items"] == []
 
     author_connections = (
         await author["client"].get("/api/v1/connections?filter=received")

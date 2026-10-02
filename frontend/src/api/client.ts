@@ -178,9 +178,9 @@ export const matches = {
 // ─── Connections ─────────────────────────────────────────────────────────────
 
 export const connections = {
-  list: (filter?: 'received' | 'sent' | 'connected') =>
+  list: (filter?: 'received' | 'sent' | 'connected', cursor?: string) =>
     api.get<Page<Connection>>(
-      `/api/v1/connections${filter ? `?filter=${filter}` : ''}`,
+      `/api/v1/connections?${new URLSearchParams({ ...(filter ? { filter } : {}), ...(cursor ? { cursor } : {}) })}`,
     ),
   summary: () => api.get<ConnectionSummary>('/api/v1/connections/summary'),
   send: (receiver_id: string, message?: string) =>
@@ -195,7 +195,8 @@ export const connections = {
 // ─── Messaging ───────────────────────────────────────────────────────────────
 
 export const messages = {
-  threads: () => api.get<Thread[]>('/api/v1/threads'),
+  threads: (cursor?: string) =>
+    api.get<Page<Thread>>(`/api/v1/threads${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`),
   thread: (id: string) => api.get<Thread>(`/api/v1/threads/${id}`),
   history: (id: string) => api.get<Page<Message>>(`/api/v1/threads/${id}/messages`),
   send: (id: string, body: string) =>
@@ -258,15 +259,19 @@ export const admin = {
   reactivate: (id: string) => api.post<void>(`/api/v1/admin/users/${id}/reactivate`),
   grantAdmin: (id: string) => api.post<void>(`/api/v1/admin/users/${id}/grant-admin`),
   revokeAdmin: (id: string) => api.del<void>(`/api/v1/admin/users/${id}/admin`),
-  skills: () => api.get<Ref[]>('/api/v1/admin/skills'),
+  skills: (cursor?: string) =>
+    api.get<Page<Ref>>(`/api/v1/admin/skills${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`),
   createSkill: (name: string, category?: string) =>
     api.post<Ref>('/api/v1/admin/skills', { name, category }),
   renameSkill: (id: string, name: string) =>
     api.patch<Ref>(`/api/v1/admin/skills/${id}`, { name }),
   deleteSkill: (id: string) => api.del<void>(`/api/v1/admin/skills/${id}`),
-  courses: () => api.get<Course[]>('/api/v1/admin/courses'),
+  courses: (cursor?: string) =>
+    api.get<Page<Course>>(`/api/v1/admin/courses${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`),
   createCourse: (name: string) => api.post<Course>('/api/v1/admin/courses', { name }),
-  interests: () => api.get<Ref[]>('/api/v1/admin/interests'),
+  interests: (cursor?: string) =>
+    api.get<Page<Ref>>(`/api/v1/admin/interests${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`),
   createInterest: (name: string) => api.post<Ref>('/api/v1/admin/interests', { name }),
-  audit: () => api.get<Page<AuditRow>>('/api/v1/admin/audit'),
+  audit: (cursor?: string) =>
+    api.get<Page<AuditRow>>(`/api/v1/admin/audit${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`),
 }

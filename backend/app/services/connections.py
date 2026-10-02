@@ -163,7 +163,12 @@ async def get_request_or_404(db: AsyncSession, request_id: uuid.UUID) -> Connect
 
 
 async def load_participant_requests(
-    db: AsyncSession, user_id: uuid.UUID, *, connection_filter: str | None = None
+    db: AsyncSession,
+    user_id: uuid.UUID,
+    *,
+    connection_filter: str | None = None,
+    limit: int = 20,
+    cursor: str | None = None,
 ) -> list[ConnectionRequest]:
     stmt = select(ConnectionRequest).where(
         (ConnectionRequest.sender_id == user_id)
@@ -181,8 +186,16 @@ async def load_participant_requests(
         )
     elif connection_filter == "connected":
         stmt = stmt.where(ConnectionRequest.status == ConnectionStatus.ACCEPTED)
-    stmt = stmt.order_by(ConnectionRequest.created_at.desc())
-    return list(await db.scalars(stmt))
+    if cursor:
+        from app.services.pagination import decode_cursor
+
+        since, since_id = decode_cursor(cursor)
+        stmt = stmt.where(
+            (ConnectionRequest.created_at < since)
+            | ((ConnectionRequest.created_at == since) & (ConnectionRequest.id < since_id))
+        )
+    stmt = stmt.order_by(ConnectionRequest.created_at.desc(), ConnectionRequest.id.desc())
+    return list(await db.scalars(stmt.limit(limit + 1)))
 
 
 async def connection_state(

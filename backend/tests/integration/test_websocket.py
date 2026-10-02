@@ -379,6 +379,46 @@ async def test_malformed_frame_does_not_kill_the_socket(
         assert (await recvn(socket_b))["type"] == "pong"
 
 
+async def test_socket_send_validates_like_http(
+    live_server, ws_client, truncate_test_tables
+):
+    """Rule 5 applies to the socket too. HTTP rejects an empty or >2000-character
+    body; the send frame must not be the way round it."""
+    truncate_test_tables()
+    _http_base, ws_url = live_server
+    alice, bob, tid, http_a, http_b = await connect_pair(ws_client)
+
+    socket_a, _ = await subscribe(ws_url, alice, tid)
+    async with socket_a:
+        # A JSON array is a frame, but not one this protocol speaks.
+        await socket_a.send(json.dumps([1, 2, 3]))
+        assert (await recvn(socket_a))["type"] == "error"
+
+        await socket_a.send(
+            json.dumps({"type": "send_message", "thread_id": tid, "body": "x" * 2001})
+        )
+        assert (await recvn(socket_a))["type"] == "error"
+
+        # Whitespace-only is trimmed to empty and refused too.
+        await socket_a.send(
+            json.dumps({"type": "send_message", "thread_id": tid, "body": "   "})
+        )
+        assert (await recvn(socket_a))["type"] == "error"
+
+        # Nothing was stored, and the socket still works.
+        assert http_b.get(f"/api/v1/threads/{tid}/messages").json()["items"] == []
+        await socket_a.send(json.dumps({"type": "ping"}))
+        assert (await recvn(socket_a))["type"] == "pong"
+
+        # The HTTP cap is inclusive: exactly 2000 characters is valid.
+        await socket_a.send(
+            json.dumps({"type": "send_message", "thread_id": tid, "body": "x" * 2000})
+        )
+        ack = await recvn(socket_a)
+        assert ack["type"] == "ack"
+        assert len(ack["data"]["body"]) == 2000
+
+
 async def test_two_tabs_for_the_same_user_both_receive(
     live_server, ws_client, truncate_test_tables
 ):

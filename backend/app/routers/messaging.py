@@ -35,25 +35,29 @@ from app.services import messaging as svc
 router = APIRouter(prefix="/api/v1", tags=["messaging"])
 
 
-@router.get("/threads", response_model=list[ThreadOut])
+@router.get("/threads", response_model=Page)
 async def list_threads(
-    user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)
+    limit: int = Query(default=20, ge=1, le=100),
+    cursor: str | None = None,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ):
-    rows = await svc.list_threads(db, user.id)
-    out = []
-    for thread, _request, other in rows:
-        messages = await svc.list_messages(db, thread.id, limit=1)
-        last = messages[0] if messages else None
-        out.append(
+    rows = await svc.list_threads(db, user.id, limit=limit, cursor=cursor)
+    has_more = len(rows) > limit
+    rows = rows[:limit]
+    out = [
             thread_out(
                 thread,
                 other,
                 last_message=last,
-                unread_count=await svc.unread_count(db, thread.id, user.id),
+                unread_count=unread,
             )
-        )
-    out.sort(key=lambda t: (t.last_message_at is None, t.last_message_at), reverse=True)
-    return out
+        for thread, _request, other, last, unread in rows
+    ]
+    return Page(
+        items=out,
+        next_cursor=svc.encode_thread_cursor(rows[-1]) if has_more and rows else None,
+    )
 
 
 @router.get("/threads/{thread_id}", response_model=ThreadOut)
@@ -172,6 +176,11 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                     websocket, {"type": "error", "code": "bad_request", "message": "Expected JSON."}
                 )
                 continue
+            if not isinstance(raw, dict):
+                await manager.send_to(
+                    websocket, {"type": "error", "code": "bad_request", "message": "Expected a JSON object."}
+                )
+                continue
             kind = raw.get("type")
 
             if kind == "subscribe":
@@ -210,11 +219,18 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
 
             elif kind == "send_message":
                 thread_id = _uuid(raw.get("thread_id"))
-                body = (raw.get("body") or "").strip()
+                raw_body = raw.get("body")
                 client_id = raw.get("client_id")
-                if thread_id is None or not body:
+                if thread_id is None or not isinstance(raw_body, str):
                     await manager.send_to(
                         websocket, {"type": "error", "code": "bad_request", "message": "thread_id and body required"}
+                    )
+                    continue
+                body = raw_body.strip()
+                if not body or len(body) > 2000:
+                    await manager.send_to(
+                        websocket,
+                        {"type": "error", "code": "validation_error", "message": "Message must be 1–2000 characters after trimming."},
                     )
                     continue
                 async with SessionLocal() as db:

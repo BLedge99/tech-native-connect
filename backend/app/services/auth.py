@@ -258,7 +258,11 @@ async def consume_magic_link(db: AsyncSession, token: bytes) -> User:
     from app.errors import BadRequest
 
     result = await db.execute(
-        select(MagicLinkToken).where(MagicLinkToken.token_hash == hash_token(token))
+        select(MagicLinkToken)
+        .where(MagicLinkToken.token_hash == hash_token(token))
+        # Serialize simultaneous verification attempts. The second transaction
+        # observes used_at after the first commits and cannot create a session.
+        .with_for_update()
     )
     row = result.scalar_one_or_none()
     if row is None:

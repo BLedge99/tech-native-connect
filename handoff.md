@@ -14,25 +14,19 @@ code is actually in**, which is not derivable from the specs.
 
 | Suite | Command | Result |
 |---|---|---|
-| Backend unit + integration | `docker compose exec -T backend pytest tests` | **235 passed** (~5.5 min) |
+| Backend unit + integration | `docker compose exec -T backend pytest tests` | **240 passed** (389s) |
 | Frontend components | `docker compose exec -T frontend npx vitest run` | **26 passed** |
 | Frontend typecheck | `docker compose exec -T frontend npx tsc --noEmit` | clean |
-| E2E (Playwright) | `docker compose exec -T frontend npx playwright test` | **11 passed** (~2 min) |
-| Evidence recordings (separate) | `docker compose exec -T frontend npx playwright test -c playwright.videos.config.ts` | **10 passed** (~5.5 min) — see §6 |
+| E2E (Playwright) | `docker compose exec -T frontend npx playwright test` | **11 passed** (1.4 min) |
+| Evidence recordings (separate) | `docker compose exec -T frontend npx playwright test -c playwright.videos.config.ts` | **10 passed** (5.5 min) — see §6 |
 
-Re-verified in full after the documentation pass: 230 backend passed (~6m42s),
-26 component tests passed, `tsc --noEmit` clean.
-
-Re-verified again 2 Oct after the session/logout fixes below: **233 backend
-passed, 26 component tests passed, `tsc --noEmit` clean, 11 E2E passed**, and
-`docker compose logs backend` shows **zero** `Unhandled error` /
-`StaleDataError` / `Content-Length` entries for the whole E2E run. Previously
-every logout logged one.
-
-Re-verified a third time 2 Oct after the second bug hunt and the video work:
-**235 backend passed, 26 component tests passed, `tsc --noEmit` clean, 11 E2E
-passed, 10 recordings passed.** The extra two backend tests are the two new
-bugs in §3.
+**Final verification, 2 Oct 2026, after the cursor pagination and input
+validation fixes:** all five commands above passed in WSL Docker. The backend
+suite first exposed three stale admin test expectations after reference lists
+changed to page envelopes; those tests were updated to read `items` and expect
+the endpoint's HTTP 200 response, then the full backend suite passed. The
+frontend component run emits React Router future-flag and React `act(...)`
+warnings; these are non-failing cleanup opportunities.
 
 ---
 
@@ -178,6 +172,11 @@ so was not a docstring, and `/users/{id}` shadowed `/users/me`.
 - **`NOTIFICATIONS_CHANGED`** is exported from `components/Notifications.tsx`
   and dispatched by `NotificationsPage` on both read paths. Anything else that
   marks notifications read must dispatch it too, or the badge drifts again.
+- **`/api/v1/threads` is an envelope, not an array** (§11). It returned
+  `Thread[]` until the pagination review. Same for `/connections`, and
+  `/admin/users` + `/admin/audit` now take a `cursor` and cap `limit` at 100.
+  If you add a list endpoint, copy the shape from `services/pagination.py`
+  rather than inventing one.
 
 ---
 
@@ -426,3 +425,71 @@ All demo users are in `backend/app/seed.py`.
 - **`backend/tests/conftest.py` sets `DATABASE_URL` before importing app
   config.** The engine is built at import time; redirecting afterwards points
   tests at the dev database.
+
+---
+
+## 11. Review findings — 2 October 2026
+
+The following issues were found in a read-only code review and are being fixed
+one at a time. The specs remain unchanged; the shared conventions and feature
+specs already define the expected behavior.
+
+| Finding | Impact | Status |
+|---|---|---|
+| WebSocket message validation differs from HTTP validation | Oversized bodies can be stored, and non-object JSON frames can terminate the socket | Fixed 2 Oct: validate object frames and enforce 1–2000 trimmed characters |
+| Several list endpoints do not implement cursor pagination | Connection/admin lists can silently omit rows or grow without bound | Fixed 2 Oct: connections, admin users/audit/reference lists, and threads use cursor pages; screens expose Load more |
+| Malformed pagination cursors could cause server errors | Cursor JSON and UUID parsing happened without converting bad client input to a 4xx response | Fixed 2 Oct: shared, match, thread, and admin reference decoders return `400 invalid_cursor` |
+| Magic-link consumption is not atomic | Simultaneous verification requests may both consume one single-use token | Fixed 2 Oct: row lock serializes consumption; later verifier sees the used state |
+| Thread list performs per-thread database queries | Query count grows with the user's thread count | Fixed 2 Oct: one page query joins the latest message and computes unread count; database work is bounded to the requested page |
+
+### Verification of the initial review fixes — 2 Oct 2026
+
+All four suites re-run. **First pass: 4 backend tests failed.** All four were
+the *same* root cause, and it was in the tests, not the code.
+
+| Failing test | Cause | Fix |
+|---|---|---|
+| `test_rules.py::test_thread_list_only_contains_participants` | `/threads` returned a **bare JSON array**; the pagination fix wrapped it in the `{"items", "next_cursor"}` envelope. `for thread in threads` then iterated the two dict *keys* → `TypeError: string indices must be integers` | Read `["items"]` |
+| `test_rules.py::test_accept_does_not_create_a_thread` | Same: `.json() == []` is now `.json()["items"] == []` | `["items"]` |
+| `test_ideas.py::test_interest_does_not_create_a_connection_or_thread` | Same | `["items"]` |
+| `test_admin.py::test_overview_counts_match_reality` | Two causes. `?limit=200` now **422s** — the pagination fix lowered the cap to 100 to match `specs/00_conventions.md` §5, so the `KeyError: 'items'` was FastAPI's validation body, not a page | `limit=100`, plus an assertion that `limit=101` is rejected so the cap cannot silently drift again |
+
+**Lesson, and it is the mirror image of §3.** A response-shape change is an
+API change: the tests that pin the shape are the tests that break, and here
+they broke *loudly and correctly*. Do not "fix" a red test by reverting the
+envelope — `specs/00_conventions.md` §5 requires it, and four other list
+endpoints already used it. **Before changing the shape of any endpoint, grep
+every caller**: `backend/tests/`, `frontend/src/api/client.ts` and the page
+components. Here the frontend was already updated (`client.ts` returns
+`Page<Thread>` and both admin/connections/messages take a `cursor`) but four
+tests were missed, which is the exact pattern §3's stale-module bug predicts.
+
+**Two of the four fixes had no test at all**, so they are now covered:
+
+- `test_websocket.py::test_socket_send_validates_like_http` — a JSON *array*
+  frame, a 2001-character body and a whitespace-only body are each refused with
+  an error frame, nothing is persisted, the socket still answers `ping`, and an
+  exactly 2000-character message is accepted.
+- `test_rules.py::test_thread_and_connection_lists_page_by_cursor` — page 2 of
+  `/connections` and `/threads` shares no id with page 1 and reports
+  `next_cursor: null` on the last page. This is the assertion that catches a
+  missing tiebreaker column, which is the whole reason §5 mandates one.
+
+### Review correction — empty-thread cursor behavior
+
+The initial review note incorrectly described empty threads as repeating on
+every page. They sort after message-bearing threads; the first cursor after a
+message can include them, and once a page ends on an empty thread its cursor
+uses the null-message branch, which advances by `(thread.created_at, thread.id)`.
+A regression test now pages through one message-bearing thread and several
+empty threads and checks that no thread repeats.
+
+The admin courses, skills and interests lists were also found to be exceptions
+to the shared pagination rule. They now return the standard page envelope and
+the admin reference-data screens expose a Load more control. Added tests cover
+all three lists, malformed cursors across list families, multiple empty-thread
+pages, and concurrent magic-link consumption. Final verification passed with
+240 backend tests, 26 frontend component tests, clean TypeScript, 11 E2E tests,
+and 10 evidence recording tests. `git diff --check` also reported no whitespace
+errors. Tests were run through WSL Docker; use `wsl.exe` from Windows when the
+Docker CLI is not directly available in PowerShell.

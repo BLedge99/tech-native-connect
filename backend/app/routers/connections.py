@@ -22,6 +22,7 @@ from app.schemas import (
 )
 from app.serializers import connection_out
 from app.services import connections as svc
+from app.services.pagination import encode_cursor
 
 router = APIRouter(prefix="/api/v1/connections", tags=["connections"])
 
@@ -64,6 +65,8 @@ async def send_connection(
 @router.get("", response_model=Page)
 async def list_connections(
     filter: str | None = Query(default=None, alias="filter"),
+    limit: int = Query(default=20, ge=1, le=100),
+    cursor: str | None = None,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -73,7 +76,11 @@ async def list_connections(
 
         raise ValidationFailed({"filter": "Unknown filter."})
 
-    requests = await svc.load_participant_requests(db, user.id, connection_filter=filter)
+    requests = await svc.load_participant_requests(
+        db, user.id, connection_filter=filter, limit=limit, cursor=cursor
+    )
+    has_more = len(requests) > limit
+    requests = requests[:limit]
     out = []
     for request in requests:
         other = await _other(db, request, user.id)
@@ -85,7 +92,14 @@ async def list_connections(
                 thread_id=await _thread_id(db, request.id),
             )
         )
-    return Page(items=out)
+    return Page(
+        items=out,
+        next_cursor=(
+            encode_cursor(requests[-1].created_at, requests[-1].id)
+            if has_more and requests
+            else None
+        ),
+    )
 
 
 @router.post("/{request_id}/thread", status_code=201, dependencies=[Depends(require_csrf)])

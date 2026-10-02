@@ -6,6 +6,9 @@ idea editing. Every route needs get_current_admin — one auth test per route.
 
 from __future__ import annotations
 
+import base64
+import binascii
+import json
 import uuid
 from datetime import UTC, datetime, timedelta
 
@@ -16,7 +19,7 @@ from sqlalchemy.orm import selectinload
 
 from app.db import get_db
 from app.dependencies import get_current_admin, require_csrf
-from app.errors import Conflict, LastAdmin, NotFound, ValidationFailed
+from app.errors import BadRequest, Conflict, LastAdmin, NotFound, ValidationFailed
 from app.models import (
     AdminAuditLog,
     ConnectionRequest,
@@ -40,6 +43,7 @@ from app.schemas import (
     RefOut,
 )
 from app.serializers import admin_user_out, audit_out
+from app.services.pagination import decode_cursor, encode_cursor
 from app.services.profiles import recompute_profile_complete
 
 router = APIRouter(prefix="/api/v1/admin", tags=["admin"])
@@ -101,7 +105,8 @@ async def list_users(
     q: str | None = None,
     is_active: bool | None = None,
     is_admin: bool | None = None,
-    limit: int = Query(default=50, ge=1, le=200),
+    limit: int = Query(default=50, ge=1, le=100),
+    cursor: str | None = None,
     admin: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db),
 ):
@@ -111,7 +116,7 @@ async def list_users(
             selectinload(User.profile).selectinload(Profile.skills),
             selectinload(User.profile).selectinload(Profile.course),
         )
-        .order_by(User.created_at.desc())
+        .order_by(User.created_at.desc(), User.id.desc())
     )
     if q:
         pattern = f"%{q.strip()}%"
@@ -120,8 +125,16 @@ async def list_users(
         stmt = stmt.where(User.is_active.is_(is_active))
     if is_admin is not None:
         stmt = stmt.where(User.is_admin.is_(is_admin))
-    rows = list(await db.scalars(stmt.limit(limit)))
-    return Page(items=[admin_user_out(u) for u in rows], next_cursor=None)
+    if cursor:
+        since, since_id = decode_cursor(cursor)
+        stmt = stmt.where((User.created_at < since) | ((User.created_at == since) & (User.id < since_id)))
+    rows = list(await db.scalars(stmt.limit(limit + 1)))
+    has_more = len(rows) > limit
+    rows = rows[:limit]
+    return Page(
+        items=[admin_user_out(u) for u in rows],
+        next_cursor=encode_cursor(rows[-1].created_at, rows[-1].id) if has_more and rows else None,
+    )
 
 
 @router.get("/users/{user_id}", response_model=AdminUserOut)
@@ -224,9 +237,43 @@ async def revoke_admin(
 # ─── Reference data ──────────────────────────────────────────────────────────
 
 
-@router.get("/courses", response_model=list[CourseOut])
-async def list_courses(_admin: User = Depends(get_current_admin), db: AsyncSession = Depends(get_db)):
-    return [CourseOut(id=c.id, name=c.name) for c in await db.scalars(select(Course).order_by(Course.name))]
+async def _reference_page(db: AsyncSession, model, limit: int, cursor: str | None):
+    stmt = select(model)
+    if cursor:
+        try:
+            padding = "=" * (-len(cursor) % 4)
+            token = json.loads(base64.urlsafe_b64decode(cursor + padding))
+            after_name, after_id = token["name"], uuid.UUID(token["id"])
+            if not isinstance(after_name, str):
+                raise ValueError("Invalid cursor name")
+        except (ValueError, TypeError, KeyError, OverflowError, binascii.Error) as exc:
+            raise BadRequest("That pagination cursor is invalid.", code="invalid_cursor") from exc
+        stmt = stmt.where(
+            (model.name > after_name)
+            | ((model.name == after_name) & (model.id > after_id))
+        )
+    rows = list(await db.scalars(stmt.order_by(model.name, model.id).limit(limit + 1)))
+    has_more = len(rows) > limit
+    rows = rows[:limit]
+    next_cursor = None
+    if has_more and rows:
+        payload = json.dumps({"name": rows[-1].name, "id": str(rows[-1].id)}).encode()
+        next_cursor = base64.urlsafe_b64encode(payload).decode().rstrip("=")
+    return rows, next_cursor
+
+
+@router.get("/courses", response_model=Page)
+async def list_courses(
+    limit: int = Query(default=20, ge=1, le=100),
+    cursor: str | None = None,
+    _admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    rows, next_cursor = await _reference_page(db, Course, limit, cursor)
+    return Page(
+        items=[CourseOut(id=c.id, name=c.name) for c in rows],
+        next_cursor=next_cursor,
+    )
 
 
 @router.post("/courses", response_model=CourseOut, dependencies=[Depends(require_csrf)])
@@ -263,9 +310,18 @@ async def update_course(
     return CourseOut(id=course.id, name=course.name)
 
 
-@router.get("/skills", response_model=list[RefOut])
-async def list_skills(_admin: User = Depends(get_current_admin), db: AsyncSession = Depends(get_db)):
-    return [RefOut(id=s.id, name=s.name) for s in await db.scalars(select(Skill).order_by(Skill.name))]
+@router.get("/skills", response_model=Page)
+async def list_skills(
+    limit: int = Query(default=20, ge=1, le=100),
+    cursor: str | None = None,
+    _admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    rows, next_cursor = await _reference_page(db, Skill, limit, cursor)
+    return Page(
+        items=[RefOut(id=s.id, name=s.name) for s in rows],
+        next_cursor=next_cursor,
+    )
 
 
 @router.post("/skills", response_model=RefOut, dependencies=[Depends(require_csrf)])
@@ -327,9 +383,18 @@ async def delete_skill(
     return None
 
 
-@router.get("/interests", response_model=list[RefOut])
-async def list_interests(_admin: User = Depends(get_current_admin), db: AsyncSession = Depends(get_db)):
-    return [RefOut(id=i.id, name=i.name) for i in await db.scalars(select(Interest).order_by(Interest.name))]
+@router.get("/interests", response_model=Page)
+async def list_interests(
+    limit: int = Query(default=20, ge=1, le=100),
+    cursor: str | None = None,
+    _admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    rows, next_cursor = await _reference_page(db, Interest, limit, cursor)
+    return Page(
+        items=[RefOut(id=i.id, name=i.name) for i in rows],
+        next_cursor=next_cursor,
+    )
 
 
 @router.post("/interests", response_model=RefOut, dependencies=[Depends(require_csrf)])
@@ -393,16 +458,28 @@ async def delete_interest(
 @router.get("/audit", response_model=Page)
 async def list_audit(
     action: str | None = None,
-    limit: int = Query(default=100, ge=1, le=500),
+    limit: int = Query(default=100, ge=1, le=100),
+    cursor: str | None = None,
     _admin: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db),
 ):
     """Boring on purpose. Its job is to make "who looked at what" answerable."""
-    stmt = select(AdminAuditLog).order_by(AdminAuditLog.created_at.desc())
+    stmt = select(AdminAuditLog).order_by(AdminAuditLog.created_at.desc(), AdminAuditLog.id.desc())
     if action:
         stmt = stmt.where(AdminAuditLog.action == action)
-    rows = list(await db.scalars(stmt.limit(limit)))
-    return Page(items=[audit_out(r) for r in rows], next_cursor=None)
+    if cursor:
+        since, since_id = decode_cursor(cursor)
+        stmt = stmt.where(
+            (AdminAuditLog.created_at < since)
+            | ((AdminAuditLog.created_at == since) & (AdminAuditLog.id < since_id))
+        )
+    rows = list(await db.scalars(stmt.limit(limit + 1)))
+    has_more = len(rows) > limit
+    rows = rows[:limit]
+    return Page(
+        items=[audit_out(r) for r in rows],
+        next_cursor=encode_cursor(rows[-1].created_at, rows[-1].id) if has_more and rows else None,
+    )
 
 
 __all__ = ["router"]

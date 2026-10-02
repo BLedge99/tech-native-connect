@@ -14,10 +14,33 @@ const MAX_CHARS = 2000
 
 export function MessagesPage() {
   const query = useQuery(() => msgApi.threads(), [])
+  const [extraThreads, setExtraThreads] = useState<Thread[]>([])
+  const [nextCursor, setNextCursor] = useState<string | null>(null)
+  const [loadingMore, setLoadingMore] = useState(false)
+  const [moreError, setMoreError] = useState<string | null>(null)
+  useEffect(() => {
+    setExtraThreads([])
+    setNextCursor(query.data?.next_cursor ?? null)
+  }, [query.data])
 
   if (query.loading) return <Spinner />
   if (query.error) return <ErrorState message="Couldn't load conversations." onRetry={query.refetch} />
-  const threads = query.data ?? []
+  const threads = [...(query.data?.items ?? []), ...extraThreads]
+
+  const loadMore = async () => {
+    if (!nextCursor || loadingMore) return
+    setLoadingMore(true)
+    setMoreError(null)
+    try {
+      const page = await msgApi.threads(nextCursor)
+      setExtraThreads((current) => [...current, ...page.items])
+      setNextCursor(page.next_cursor)
+    } catch {
+      setMoreError("Couldn't load more conversations.")
+    } finally {
+      setLoadingMore(false)
+    }
+  }
 
   return (
     <div className="space-y-6">
@@ -32,6 +55,7 @@ export function MessagesPage() {
           }
         />
       ) : (
+        <>
         <ul className="divide-y divide-slate-100 rounded-xl border border-slate-200 bg-white">
           {threads.map((thread) => (
             <li key={thread.id}>
@@ -59,6 +83,9 @@ export function MessagesPage() {
             </li>
           ))}
         </ul>
+        {moreError && <p role="alert" className="text-sm text-red-700">{moreError}</p>}
+        {nextCursor && <button className="text-sm text-brand-700 underline" onClick={loadMore} disabled={loadingMore}>{loadingMore ? 'Loading…' : 'Load more conversations'}</button>}
+        </>
       )}
     </div>
   )

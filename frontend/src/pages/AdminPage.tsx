@@ -4,11 +4,11 @@
  * people's content. There are deliberately no controls to edit a profile or an
  * idea here. */
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { admin as adminApi } from '../api/client'
 import { ApiError } from '../api/client'
-import type { AdminOverview, AdminUser, AuditRow, Ref } from '../api/types'
+import type { AdminOverview, AdminUser, AuditRow, Page, Ref } from '../api/types'
 import { Button, ErrorState, Spinner } from '../components/ui'
 import { useQuery } from '../hooks/useQuery'
 
@@ -74,11 +74,34 @@ function OverviewTab() {
 function UsersTab() {
   const [search, setSearch] = useState('')
   const [reloadKey, bumpReload] = useState(0)
+  const [extraUsers, setExtraUsers] = useState<AdminUser[]>([])
+  const [nextCursor, setNextCursor] = useState<string | null>(null)
+  const [loadingMore, setLoadingMore] = useState(false)
+  const [moreError, setMoreError] = useState<string | null>(null)
   const query = useQuery(() => adminApi.users({ q: search || undefined, limit: 100 }), [search, reloadKey])
+  useEffect(() => {
+    setExtraUsers([])
+    setNextCursor(query.data?.next_cursor ?? null)
+  }, [query.data])
 
   if (query.loading) return <Spinner />
   if (query.error) return <ErrorState message={query.error.message} onRetry={query.refetch} />
-  const users = query.data?.items ?? []
+  const users = [...(query.data?.items ?? []), ...extraUsers]
+
+  const loadMore = async () => {
+    if (!nextCursor || loadingMore) return
+    setLoadingMore(true)
+    setMoreError(null)
+    try {
+      const page = await adminApi.users({ q: search || undefined, limit: 100, cursor: nextCursor })
+      setExtraUsers((current) => [...current, ...page.items])
+      setNextCursor(page.next_cursor)
+    } catch {
+      setMoreError("Couldn't load more users.")
+    } finally {
+      setLoadingMore(false)
+    }
+  }
 
   const act = async (fn: () => Promise<unknown>) => {
     try {
@@ -158,6 +181,8 @@ function UsersTab() {
           ))}
         </tbody>
       </table>
+      {moreError && <p role="alert" className="text-sm text-red-700">{moreError}</p>}
+      {nextCursor && <button className="text-sm text-brand-700 underline" onClick={loadMore} disabled={loadingMore}>{loadingMore ? 'Loading…' : 'Load more users'}</button>}
     </div>
   )
 }
@@ -179,13 +204,21 @@ function RefList({
   rename,
 }: {
   title: string
-  load: () => Promise<Ref[]>
+  load: (cursor?: string) => Promise<Page<Ref>>
   create: (name: string) => Promise<Ref>
   rename: ((id: string, name: string) => Promise<Ref>) | null
 }) {
   const [reloadKey, bumpReload] = useState(0)
   const query = useQuery(() => load(), [reloadKey])
   const [draft, setDraft] = useState('')
+  const [extraItems, setExtraItems] = useState<Ref[]>([])
+  const [nextCursor, setNextCursor] = useState<string | null>(null)
+  const [loadingMore, setLoadingMore] = useState(false)
+  const [moreError, setMoreError] = useState<string | null>(null)
+  useEffect(() => {
+    setExtraItems([])
+    setNextCursor(query.data?.next_cursor ?? null)
+  }, [query.data])
 
   const add = async () => {
     if (!draft.trim()) return
@@ -198,7 +231,22 @@ function RefList({
     }
   }
 
-  const items = query.data ?? []
+  const items = [...(query.data?.items ?? []), ...extraItems]
+
+  const loadMore = async () => {
+    if (!nextCursor || loadingMore) return
+    setLoadingMore(true)
+    setMoreError(null)
+    try {
+      const page = await load(nextCursor)
+      setExtraItems((current) => [...current, ...page.items])
+      setNextCursor(page.next_cursor)
+    } catch {
+      setMoreError(`Couldn't load more ${title.toLowerCase()}.`)
+    } finally {
+      setLoadingMore(false)
+    }
+  }
 
   return (
     <div className="rounded-xl border border-slate-200 bg-white p-4">
@@ -249,17 +297,40 @@ function RefList({
           </li>
         ))}
       </ul>
+      {moreError && <p role="alert" className="mt-2 text-sm text-red-700">{moreError}</p>}
+      {nextCursor && <button className="mt-2 text-xs text-brand-700 underline" onClick={loadMore} disabled={loadingMore}>{loadingMore ? 'Loading…' : `Load more ${title.toLowerCase()}`}</button>}
     </div>
   )
 }
 
 function AuditTab() {
+  const [extraRows, setExtraRows] = useState<AuditRow[]>([])
+  const [nextCursor, setNextCursor] = useState<string | null>(null)
+  const [loadingMore, setLoadingMore] = useState(false)
+  const [moreError, setMoreError] = useState<string | null>(null)
   const query = useQuery(() => adminApi.audit(), [])
+  useEffect(() => setNextCursor(query.data?.next_cursor ?? null), [query.data])
   if (query.loading) return <Spinner />
   if (query.error) return <ErrorState message={query.error.message} onRetry={query.refetch} />
-  const rows = query.data?.items ?? []
+  const rows = [...(query.data?.items ?? []), ...extraRows]
+
+  const loadMore = async () => {
+    if (!nextCursor || loadingMore) return
+    setLoadingMore(true)
+    setMoreError(null)
+    try {
+      const page = await adminApi.audit(nextCursor)
+      setExtraRows((current) => [...current, ...page.items])
+      setNextCursor(page.next_cursor)
+    } catch {
+      setMoreError("Couldn't load more audit entries.")
+    } finally {
+      setLoadingMore(false)
+    }
+  }
 
   return (
+    <div>
     <table className="w-full border-collapse text-sm">
       <thead>
         <tr className="border-b border-slate-200 text-left text-slate-500">
@@ -283,6 +354,9 @@ function AuditTab() {
           </tr>
         ))}
       </tbody>
-    </table>
+      </table>
+      {moreError && <p role="alert" className="text-sm text-red-700">{moreError}</p>}
+      {nextCursor && <button className="mt-3 text-sm text-brand-700 underline" onClick={loadMore} disabled={loadingMore}>{loadingMore ? 'Loading…' : 'Load more audit entries'}</button>}
+    </div>
   )
 }

@@ -7,13 +7,17 @@ including on the WebSocket subscribe path.
 
 from __future__ import annotations
 
+import base64
+import binascii
+import json
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import func, select
+from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
-from app.errors import ConnectionNotEstablished, Forbidden, NotFound
+from app.errors import BadRequest, ConnectionNotEstablished, Forbidden, NotFound
 from app.models import (
     ConnectionRequest,
     Message,
@@ -90,28 +94,99 @@ async def open_thread_for_pair(
 
 
 async def list_threads(
-    db: AsyncSession, user_id: uuid.UUID
-) -> list[tuple[Thread, ConnectionRequest, User]]:
-    """Only threads the user participates in AND whose connection is accepted."""
-    result = await db.execute(
-        select(Thread, ConnectionRequest)
+    db: AsyncSession,
+    user_id: uuid.UUID,
+    *,
+    limit: int = 20,
+    cursor: str | None = None,
+) -> list[tuple[Thread, ConnectionRequest, User, Message | None, int]]:
+    """Page a user's accepted threads with a fixed number of database queries."""
+    latest_message = (
+        select(Message)
+        .join(Thread, Thread.id == Message.thread_id)
         .join(ConnectionRequest, ConnectionRequest.id == Thread.connection_request_id)
+        .where(
+            ((ConnectionRequest.sender_id == user_id) | (ConnectionRequest.receiver_id == user_id)),
+            ConnectionRequest.status == ConnectionStatus.ACCEPTED,
+        )
+        .distinct(Message.thread_id)
+        .order_by(Message.thread_id, Message.created_at.desc(), Message.id.desc())
+        .subquery()
+    )
+    latest = aliased(Message, latest_message)
+    other_user_id = case(
+        (ConnectionRequest.sender_id == user_id, ConnectionRequest.receiver_id),
+        else_=ConnectionRequest.sender_id,
+    )
+    unread = (
+        select(func.count())
+        .select_from(Message)
+        .outerjoin(
+            ReadReceipt,
+            and_(ReadReceipt.thread_id == Thread.id, ReadReceipt.user_id == user_id),
+        )
+        .where(
+            Message.thread_id == Thread.id,
+            Message.sender_id != user_id,
+            or_(ReadReceipt.last_read_at.is_(None), Message.created_at > ReadReceipt.last_read_at),
+        )
+        .scalar_subquery()
+    )
+    stmt = (
+        select(Thread, ConnectionRequest, User, latest, unread.label("unread_count"))
+        .join(ConnectionRequest, ConnectionRequest.id == Thread.connection_request_id)
+        .join(User, User.id == other_user_id)
+        .outerjoin(latest, latest.thread_id == Thread.id)
         .where(
             (ConnectionRequest.sender_id == user_id)
             | (ConnectionRequest.receiver_id == user_id),
             ConnectionRequest.status == ConnectionStatus.ACCEPTED,
         )
     )
-    rows = result.all()
-    out: list[tuple[Thread, ConnectionRequest, User]] = []
-    for thread, request in rows:
-        other_id = (
-            request.receiver_id if request.sender_id == user_id else request.sender_id
+    if cursor:
+        after_time, cursor_created, after_id = _decode_thread_cursor(cursor)
+        if after_time is None:
+            stmt = stmt.where(
+                latest.created_at.is_(None),
+                (Thread.created_at < cursor_created)
+                | ((Thread.created_at == cursor_created) & (Thread.id < after_id)),
+            )
+        else:
+            stmt = stmt.where(
+                latest.created_at.is_(None)
+                | (latest.created_at < after_time)
+                | ((latest.created_at == after_time) & (Thread.id < after_id))
+            )
+    stmt = stmt.order_by(
+        latest.created_at.is_(None),
+        latest.created_at.desc(),
+        case((latest.created_at.is_(None), Thread.created_at)).desc(),
+        Thread.id.desc(),
+    ).limit(limit + 1)
+    return list((await db.execute(stmt)).all())
+
+
+def encode_thread_cursor(entry: tuple[Thread, ConnectionRequest, User, Message | None, int]) -> str:
+    thread, _request, _user, last_message, _unread = entry
+    payload = {
+        "m": last_message.created_at.isoformat() if last_message else None,
+        "c": thread.created_at.isoformat(),
+        "i": str(thread.id),
+    }
+    return base64.urlsafe_b64encode(json.dumps(payload).encode()).decode().rstrip("=")
+
+
+def _decode_thread_cursor(cursor: str) -> tuple[datetime | None, datetime, uuid.UUID]:
+    try:
+        padding = "=" * (-len(cursor) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(cursor + padding))
+        return (
+            datetime.fromisoformat(payload["m"]) if payload["m"] else None,
+            datetime.fromisoformat(payload["c"]),
+            uuid.UUID(payload["i"]),
         )
-        other = await db.get(User, other_id)
-        if other is not None:
-            out.append((thread, request, other))
-    return out
+    except (ValueError, TypeError, KeyError, OverflowError, binascii.Error) as exc:
+        raise BadRequest("That pagination cursor is invalid.", code="invalid_cursor") from exc
 
 
 def other_party(request: ConnectionRequest, viewer_id: uuid.UUID) -> uuid.UUID:

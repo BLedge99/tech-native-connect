@@ -8,10 +8,13 @@ this so a row cannot appear on two pages.
 from __future__ import annotations
 
 import base64
+import binascii
 import json
 from datetime import datetime
 from typing import Any
 from uuid import UUID
+
+from app.errors import BadRequest
 
 
 def encode_cursor(sort_value: Any, tiebreaker: UUID) -> str:
@@ -26,12 +29,17 @@ def encode_cursor(sort_value: Any, tiebreaker: UUID) -> str:
 
 
 def decode_cursor(cursor: str) -> tuple[datetime | float | int, UUID]:
-    padding = "=" * (-len(cursor) % 4)
-    payload = json.loads(base64.urlsafe_b64decode(cursor + padding))
-    value = payload["v"]
-    if isinstance(value, str) and ("-" in value and "T" in value):
-        value = datetime.fromisoformat(value)
-    return value, UUID(payload["u"])
+    try:
+        padding = "=" * (-len(cursor) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(cursor + padding))
+        value = payload["v"]
+        if not isinstance(value, (str, int, float)) or isinstance(value, bool):
+            raise ValueError("Invalid cursor value")
+        if isinstance(value, str) and ("-" in value and "T" in value):
+            value = datetime.fromisoformat(value)
+        return value, UUID(payload["u"])
+    except (ValueError, TypeError, KeyError, OverflowError, binascii.Error) as exc:
+        raise BadRequest("That pagination cursor is invalid.", code="invalid_cursor") from exc
 
 
 def next_cursor_or_none(rows: list, limit: int, sort_of) -> str | None:
