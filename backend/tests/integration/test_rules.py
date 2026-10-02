@@ -9,6 +9,12 @@ two-person feature.
 """
 
 import pytest
+from sqlalchemy import delete, func, select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+from app.dependencies import decode_cookie
+from app.models import Session as SessionRow
+from app.services.auth import load_session
 
 pytestmark = pytest.mark.anyio
 
@@ -515,6 +521,51 @@ async def test_notification_urls_are_relative(auth):
     for item in (await b["client"].get("/api/v1/notifications")).json()["items"]:
         assert item["url"].startswith("/")
         assert not item["url"].startswith("//")
+
+
+# ─── Sessions ─────────────────────────────────────────────────────────────────
+
+
+async def test_logout_returns_204_with_no_body(auth):
+    """A 204 is defined to carry no body. Serialising `null` into one made
+    starlette raise "Response content longer than Content-Length" *after* the
+    status was already on the wire, so every logout logged an invisible 500."""
+    a = await auth()
+    response = await a["client"].post("/api/v1/auth/logout", headers=a["csrf"])
+    assert response.status_code == 204
+    assert response.content == b""
+
+
+async def test_logout_actually_revokes_the_session(auth):
+    a = await auth()
+    await a["client"].post("/api/v1/auth/logout", headers=a["csrf"])
+    after = await a["client"].get("/api/v1/users/me")
+    assert after.status_code == 401
+
+
+async def test_session_revoked_mid_request_does_not_500(auth, engine):
+    """The logout-while-a-request-is-in-flight race.
+
+    load_session used to assign session.last_used_at, leaving the ORM row dirty.
+    SQLAlchemy autoflushes on the next query, so when another request deleted
+    the row in between, that flush raised StaleDataError and the caller got a
+    500 from an endpoint that has nothing to do with sessions — the bell's
+    unread-count, most visibly.
+    """
+    a = await auth()
+    token = decode_cookie(a["client"].cookies.get("session"))
+    maker = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+    async with maker() as reader:
+        assert await load_session(reader, token) is not None
+        # A second browser logs out while `reader` holds the session loaded.
+        async with maker() as other:
+            await other.execute(
+                delete(SessionRow).where(SessionRow.user_id == a["user"].id)
+            )
+            await other.commit()
+        # The next query autoflushes. It must not raise.
+        assert await reader.scalar(select(func.count()).select_from(SessionRow)) == 0
 
 
 # ─── Unread counts ───────────────────────────────────────────────────────────

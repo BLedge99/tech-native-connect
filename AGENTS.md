@@ -14,7 +14,7 @@ developers who are studying alongside them on the same bootcamp.
 - **Team:** Ben, Joey, James, Alys, Mick
 - **Current phase:** all nine required features implemented, 2 October 2026
 
-**State.** 230 backend tests, 26 frontend component tests, 11 E2E tests pass.
+**State.** 233 backend tests, 26 frontend component tests, 11 E2E tests pass.
 `tsc --noEmit` is clean. Every feature spec carries an *As built* section
 documenting its deviations; `roadmap.md` §Status summary has the totals and the
 two known gaps.

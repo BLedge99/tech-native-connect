@@ -94,15 +94,20 @@ function ConnectionRow({
   onChange: () => void
 }) {
   const [busy, setBusy] = useState(false)
+  // Inline, never alert(). A dialog blocks the page, and a failure the user
+  // cannot see is worse than no button — "Message" silently doing nothing
+  // looks exactly like a broken feature.
+  const [error, setError] = useState<string | null>(null)
   const navigate = useNavigate()
 
   const act = async (fn: () => Promise<unknown>) => {
     setBusy(true)
+    setError(null)
     try {
       await fn()
       onChange()
     } catch (err) {
-      alert(err instanceof ApiError ? err.message : 'That did not work.')
+      setError(err instanceof ApiError ? err.message : 'That did not work.')
     } finally {
       setBusy(false)
     }
@@ -127,6 +132,11 @@ function ConnectionRow({
               ? 'Declined'
               : 'Pending'}
         </p>
+        {error && (
+          <p role="alert" className="mt-1 text-sm text-red-600">
+            {error}
+          </p>
+        )}
       </div>
 
       <div className="flex shrink-0 flex-col items-end gap-2">

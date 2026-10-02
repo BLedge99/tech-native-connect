@@ -285,7 +285,7 @@ checkboxes are ticked in `specs/`. Test totals:
 
 | Suite | Result |
 |---|---|
-| Backend unit + integration | 230 passed |
+| Backend unit + integration | 233 passed |
 | Frontend component | 26 passed |
 | Frontend typecheck | clean |
 | E2E (Playwright) | 11 passed, 1 flake in 5 |

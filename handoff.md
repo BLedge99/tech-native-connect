@@ -14,13 +14,19 @@ code is actually in**, which is not derivable from the specs.
 
 | Suite | Command | Result |
 |---|---|---|
-| Backend unit + integration | `docker compose exec -T backend pytest tests` | **230 passed** (~6 min) |
+| Backend unit + integration | `docker compose exec -T backend pytest tests` | **233 passed** (~6 min) |
 | Frontend components | `docker compose exec -T frontend npx vitest run` | **26 passed** |
 | Frontend typecheck | `docker compose exec -T frontend npx tsc --noEmit` | clean |
 | E2E (Playwright) | `docker compose exec -T frontend npx playwright test` | **11 passed**, ~1 flake in 5 runs (§5.1) |
 
-Re-verified in full after the documentation pass: 230 backend passed (~6m42s),
-26 component tests passed, `tsc --noEmit` clean.
+Re-verified in full 2 Oct after the documentation pass: 230 backend passed
+(~6m42s), 26 component tests passed, `tsc --noEmit` clean.
+
+Re-verified again 2 Oct after the session/logout fixes below: **233 backend
+passed, 26 component tests passed, `tsc --noEmit` clean, 11 E2E passed**, and
+`docker compose logs backend` shows **zero** `Unhandled error` /
+`StaleDataError` / `Content-Length` entries for the whole E2E run. Previously
+every logout logged one.
 
 ---
 
@@ -95,6 +101,25 @@ have broken the demo.
 | **Search input had no accessible name** | | `aria-label` added |
 | **`peerTyping` was dead state** | Typing indicators are out of scope | Removed |
 
+Found 2 Oct, after the suite had gone green, by reading
+`docker compose logs backend` rather than by reading code — the tests were all
+passing while the server was throwing:
+
+| Bug | Symptom | Fix |
+|---|---|---|
+| **Logout sent a body with its 204** | `JSONResponse(None, 204)` serialises a literal `null`, and starlette omits `content-length` on a 204 — so `BaseHTTPMiddleware` raised `RuntimeError: Response content longer than Content-Length` *after* the status was already on the wire. Every logout logged a 500 nobody received | `logout` returns a bare `Response(status_code=204)` and takes the already-resolved session from `get_current_session` instead of re-loading it |
+| **`last_used_at` written on every request** | `load_session` assigned the attribute, leaving the ORM row dirty; SQLAlchemy autoflushes on the next query, so a session revoked by a concurrent logout turned that flush into `StaleDataError: UPDATE statement on table 'sessions' expected to update 1 row(s); 0 were matched` — a **500 on `/notifications` and `/notifications/unread-count`**, endpoints that have nothing to do with sessions | Throttled to a Core `UPDATE` at most once every 5 minutes. The ORM row stays clean, so a vanished session is a no-op instead of an exception |
+| **`ConnectionsPage` swallowed failures in `alert()`** | A failed "Message" click showed a dialog and navigated nowhere. Playwright auto-dismisses dialogs, so in a test it presented as *"the composer never appears"* — indistinguishable from the flake in §5.1 | Inline `role="alert"`, same as `PublicProfilePage` |
+
+Three regression tests in `tests/integration/test_rules.py` under a new
+*Sessions* section: 204 carries no body, logout really revokes, and a session
+revoked mid-request does not 500.
+
+**Lesson worth keeping:** a green suite is not a quiet server. `docker compose
+logs backend | grep -i unhandled` found three real bugs that 263 passing tests
+had missed, because every one of them happened *after* a successful response or
+on a race the tests never provoke.
+
 Also: `require_session` returns a tuple (three call sites had got this wrong),
 error messages were empty because the message string sat *after* an assignment
 so was not a docstring, and `/users/{id}` shadowed `/users/me`.
@@ -116,32 +141,40 @@ so was not a docstring, and `/users/{id}` shadowed `/users/me`.
 
 ## 5. Known issues
 
-### 5.1 One E2E test flakes ~1 run in 5
+### 5.1 The live-chat flake — investigated 2 Oct, could not reproduce
 
 `the demo path › request → accept → message, live in two windows`
 
-Fails inside `openConversation` at
-`await expect(page.getByLabel('Message')).toBeVisible()` — the composer never
-appears. It passes about 80% of runs.
+Previously failed inside `openConversation` at
+`await expect(page.getByLabel('Message')).toBeVisible()`, roughly 1 run in 5.
+**It did not reproduce once in 9 runs**: 8 consecutive isolated runs plus a
+full-suite run, and then 5 further consecutive full-suite runs — 55 executions
+of the centrepiece test, all green.
 
-**Likely cause:** socket subscription timing. `useThreadSubscription` only
-subscribes once `status === 'open'`. If the page renders, the composer shows,
-the test proceeds — but the subscription may not have been sent yet, so the
-*live delivery* assertion later can lose a race. The fix is almost certainly in
-the test, not the app: wait for the socket to be subscribed before sending, e.g.
+The original guess in this file was socket subscription timing. That guess is
+**wrong**, and it should not be acted on:
 
-```ts
-// In openConversation, after the composer appears:
-await page.waitForFunction(() => performance.now() > 0) // no-op placeholder
-```
+- The failure was at composer *visibility*, not at the later live-delivery
+  assertion. A subscription race cannot stop the composer rendering — the
+  composer is not gated on socket state.
+- `useThreadSubscription` cannot lose a subscription: `subscribe()` records the
+  thread in `wanted` whether or not the socket is open yet, and `onopen`
+  re-sends every entry in `wanted` after a reconnect. There is no window in
+  which a subscription is silently dropped.
+- Most likely the flake was already fixed by `tests/global-setup.ts`, which is
+  new in this same session and was added precisely because accumulated test
+  users made `.first()` selectors ambiguous. The 1-in-5 figure was measured
+  before it landed and never re-measured.
 
-Better: have `openConversation` wait for the `subscribed` acknowledgement. The
-server sends `{"type":"subscribed","thread_id":…}`; the client ignores it. The
-laziest correct fix is for `useThreadSubscription` to resolve a promise on
-`subscribed` and have the test await it, or simply add a short
-`await page.waitForTimeout(500)` after opening the conversation and accept that
-as a documented tradeoff. **Do not add a blanket retry to hide it** — a flaky
-centrepiece test is worse than a slow one.
+One real defect *did* present exactly like this flake, and is now fixed — see
+§3, `ConnectionsPage` swallowing its failure in an `alert()`. A transient error
+on `POST /connections/{id}/thread` meant the click silently did nothing. That
+plus the `StaleDataError` 500s above are the plausible triggers; both are gone.
+
+**Do not add a blanket retry or a `waitForTimeout` to hide this.** If it comes
+back, `frontend/test-results/*/error-context.md` holds the accessibility tree
+at the moment of failure — that will say which of the two it was. The test is
+the demo's centrepiece; a slow centrepiece beats a flaky one.
 
 ### 5.2 Everything else
 
@@ -187,7 +220,7 @@ section citing it: `specs/02` §13.1–13.2, `specs/05` §11.1, `specs/06` §10.
 
 | Missing | Where | Priority |
 |---|---|---|
-| Fix the live-chat flake | §5.1 | **High** — it is the demo's centrepiece test |
+| ~~Fix the live-chat flake~~ | §5.1 | ✅ Not reproducible in 9 runs, 2 Oct. Real defects that mimicked it were found and fixed in §3 |
 | ~~Update spec Implementation status + roadmap checkboxes~~ | §5.2 | ✅ Done 2 Oct |
 | Magic-link E2E test | §5.2 | Medium |
 | `IdeaFormPage` → `useNavigate`, `Linkish` → `<Link>` | §5.2 | Low |
@@ -202,7 +235,7 @@ section citing it: `specs/02` §13.1–13.2, `specs/05` §11.1, `specs/06` §10.
 docker compose up -d --build
 curl localhost:8000/api/v1/health          # {"status":"ok","database":"ok"}
 
-docker compose exec -T backend pytest tests               # 230 passed, ~6 min
+docker compose exec -T backend pytest tests               # 233 passed, ~6 min
 docker compose exec -T frontend npx vitest run            # 26 passed
 docker compose exec -T frontend npx tsc --noEmit           # clean
 docker compose exec -T frontend npx playwright test       # 11 passed
@@ -248,6 +281,11 @@ All demo users are in `backend/app/seed.py`.
   `/register`.** Waiting on the h1 is not enough — it is already there.
 - **Playwright `getByRole(name: 'Message')` also matches the nav link
   "Messages".** Use `exact: true`. This cost an hour.
+- **A green suite is not a quiet server.** Check
+  `docker compose logs backend | grep -iE "unhandled|staledata|traceback"`
+  after a run. Three real bugs lived there while all four suites passed,
+  because each one fired *after* a successful response or on a race no test
+  provokes.
 - **`backend/tests/conftest.py` sets `DATABASE_URL` before importing app
   config.** The engine is built at import time; redirecting afterwards points
   tests at the dev database.

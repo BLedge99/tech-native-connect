@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import base64
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Response
 from fastapi.responses import RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -12,12 +12,12 @@ from app.config import get_settings
 from app.db import get_db
 from app.dependencies import (
     SESSION_COOKIE,
-    decode_cookie,
     encode_cookie,
-    get_current_user,
+    get_current_session,
     require_csrf,
 )
 from app.errors import BadRequest
+from app.models import Session
 from app.schemas import LoginRequest, MagicLinkRequest, RegisterRequest
 from app.serializers import user_private
 from app.services import auth as auth_svc
@@ -77,15 +77,23 @@ async def login(payload: LoginRequest, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/logout", status_code=204, dependencies=[Depends(require_csrf)])
-async def logout(request: Request, db: AsyncSession = Depends(get_db)):
-    token = decode_cookie(request.cookies.get(SESSION_COOKIE))
-    pair = await auth_svc.load_session(db, token)
-    if pair is not None:
-        session, _user = pair
-        await auth_svc.revoke_session(db, session)
-    response = _json(None, status=204)
+async def logout(
+    response: Response,
+    session: Session = Depends(get_current_session),
+    db: AsyncSession = Depends(get_db),
+):
+    """Revoke the session the guard already resolved — FastAPI caches get_db, so
+    this is the same AsyncSession the Session object belongs to.
+
+    Two things were wrong here. It re-loaded the session a second time instead
+    of using the one require_csrf had already loaded, and it answered with
+    JSONResponse(None, 204) — which serialises a literal `null` body onto a
+    status code that is defined to have none. Starlette then raised
+    "Response content longer than Content-Length" *after* the 204 was on the
+    wire, so every logout logged a 500 nobody saw.
+    """
+    await auth_svc.revoke_session(db, session)
     response.delete_cookie(SESSION_COOKIE, path="/")
-    return response
 
 
 @router.post("/magic-link", status_code=202)

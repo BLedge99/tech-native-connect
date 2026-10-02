@@ -79,6 +79,12 @@ def derive_first_name(email: str, display_name: str | None = None) -> str:
 # ─── Sessions ────────────────────────────────────────────────────────────────
 
 
+# How stale last_used_at may get before a request bothers to write it back.
+# ponytail: a fixed interval, not a config knob — if this ever needs tuning for
+# real session-expiry behaviour, put it in settings then.
+_TOUCH_INTERVAL = timedelta(minutes=5)
+
+
 async def create_session(db: AsyncSession, user: User) -> tuple[bytes, Session]:
     settings = get_settings()
     token = new_token()
@@ -123,8 +129,18 @@ async def load_session(db: AsyncSession, token: bytes | None) -> tuple[Session, 
         return None
     if not user.is_active:
         return None
-    # Sliding expiry.
-    session.last_used_at = datetime.now(UTC)
+    # Sliding expiry, throttled. Writing last_used_at on *every* request made
+    # every request a write, and because SQLAlchemy autoflushes on the next
+    # query, a session revoked by a concurrent logout turned that flush into
+    # "StaleDataError: UPDATE statement on table 'sessions' expected to update
+    # 1 row(s); 0 were matched" — a 500 on whatever unrelated endpoint happened
+    # to query next. The touch goes through a Core UPDATE, so the ORM object
+    # stays clean and a vanished row is a no-op rather than an exception.
+    now = datetime.now(UTC)
+    if now - session.last_used_at > _TOUCH_INTERVAL:
+        await db.execute(
+            update(Session).where(Session.id == session.id).values(last_used_at=now)
+        )
     return session, user
 
 
