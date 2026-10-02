@@ -11,6 +11,8 @@ import logging
 import smtplib
 from email.message import EmailMessage
 
+import anyio
+
 from app.config import get_settings
 
 log = logging.getLogger(__name__)
@@ -30,7 +32,18 @@ def _warn_once() -> None:
         )
 
 
-def send_magic_link(to_email: str, link: str) -> bool:
+async def send_magic_link(to_email: str, link: str) -> bool:
+    """Async because the caller awaits it, and because smtplib blocks.
+
+    The route used to `await` this while it was a plain sync function, which sent
+    the mail and *then* raised "object bool can't be used in 'await' expression"
+    — a 500 on every real magic-link request, after the email had gone out. The
+    SMTP call is handed to a worker thread so it does not stall the event loop.
+    """
+    return await anyio.to_thread.run_sync(_send_sync, to_email, link)
+
+
+def _send_sync(to_email: str, link: str) -> bool:
     settings = get_settings()
     msg = EmailMessage()
     msg["Subject"] = "Your Bootcamp Connect sign-in link"

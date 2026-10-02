@@ -10,7 +10,7 @@ business developers want someone who can build the thing they keep describing.
 This app lists the people on your course, ranks the ones you overlap with, and
 tells you why.
 
-**Status:** all nine features implemented, 2 October 2026. 230 backend tests,
+**Status:** all nine features implemented, 2 October 2026. 235 backend tests,
 26 component tests, 11 E2E tests. Demo target 15 October 2026.
 
 ---
@@ -103,15 +103,20 @@ so break them deliberately or not at all.
 
 ## Running it
 
-Not yet — implementation has not started. This is the interface once the
-foundations feature lands.
+`.env` is gitignored; `.env.example` is committed. Copy it once if it is
+missing — `docker compose up` will not start without it.
 
 ```bash
-docker compose up --build          # full stack
-docker compose up -d db mailpit    # just infra; run apps on host for hot reload
+cp .env.example .env                  # only if .env does not exist
+docker compose up -d --build          # full stack
+curl localhost:8000/api/v1/health     # {"status":"ok","database":"ok"}
+docker compose up -d db mailpit       # just infra; run apps on host for hot reload
 docker compose exec db psql -U bootcamp -d bootcamp_connect
-docker compose down -v             # reset, destroys data
+docker compose down -v                # reset, destroys data
 ```
+
+First build takes a few minutes (Python wheels, npm install). After that,
+`docker compose up -d` is enough.
 
 | Service | URL |
 |---|---|
@@ -124,10 +129,22 @@ docker compose down -v             # reset, destroys data
 Mailpit is a local fake mail server — no real email is ever sent. Magic links
 land in the web inbox.
 
+## Evidence videos
+
+Nine recorded videos, one per feature, in [`videos/`](videos/) — including two
+that put two browsers side by side in a single file, so live messaging is
+visible without cutting. [`handoff.md`](handoff.md) §6 explains how they are
+made and how to re-record them.
+
+```bash
+docker compose exec -T frontend npx playwright test -c playwright.videos.config.ts
+./scripts/build-videos.sh
+```
+
 ## Tests
 
 ```bash
-docker compose exec -T backend pytest tests                      # 230 passed
+docker compose exec -T backend pytest tests                      # 235 passed
 docker compose exec -T frontend npx vitest run                   # 26 passed
 docker compose exec -T frontend npx tsc --noEmit                 # clean
 docker compose exec -T frontend npx playwright test              # 11 passed

@@ -3,6 +3,7 @@
 import { Link } from 'react-router-dom'
 import { notifications as notifApi } from '../api/client'
 import type { AppNotification } from '../api/types'
+import { NOTIFICATIONS_CHANGED } from '../components/Notifications'
 import { EmptyState, ErrorState, Spinner } from '../components/ui'
 import { useQuery } from '../hooks/useQuery'
 
@@ -38,6 +39,8 @@ export function NotificationsPage() {
           <button
             onClick={async () => {
               await notifApi.markAllRead()
+              // Tell the bell, or its badge keeps counting what is now read.
+              window.dispatchEvent(new Event(NOTIFICATIONS_CHANGED))
               query.refetch()
             }}
             className="text-sm text-brand-600 underline"
@@ -61,7 +64,10 @@ export function NotificationsPage() {
                     onClick={async () => {
                       // Mark read, then navigate, so the destination page's
                       // badge is already correct.
-                      if (!n.read_at) await notifApi.markRead(n.id).catch(() => {})
+                      if (!n.read_at) {
+                        await notifApi.markRead(n.id).catch(() => {})
+                        window.dispatchEvent(new Event(NOTIFICATIONS_CHANGED))
+                      }
                       query.refetch()
                     }}
                     className="flex items-center gap-3 px-4 py-3 hover:bg-slate-50"

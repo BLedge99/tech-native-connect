@@ -134,13 +134,24 @@ async def load_session(db: AsyncSession, token: bytes | None) -> tuple[Session, 
     # query, a session revoked by a concurrent logout turned that flush into
     # "StaleDataError: UPDATE statement on table 'sessions' expected to update
     # 1 row(s); 0 were matched" — a 500 on whatever unrelated endpoint happened
-    # to query next. The touch goes through a Core UPDATE, so the ORM object
-    # stays clean and a vanished row is a no-op rather than an exception.
+    # to query next.
+    #
+    # It goes through a Core UPDATE and is committed here rather than left dirty
+    # on the ORM object: that keeps the flush path free of the ORM UPDATE (so a
+    # vanished session is a no-op, not an exception) and it actually persists.
+    # Leaving it uncommitted looks harmless and is not — nothing else commits on
+    # a read-only request, so last_used_at would never advance, every later
+    # request would rewrite it, and each one would hold a row lock on the
+    # session for the life of the request.
+    #
+    # Safe to commit this early: load_session is the first thing a request does,
+    # so there is nothing else pending.
     now = datetime.now(UTC)
     if now - session.last_used_at > _TOUCH_INTERVAL:
         await db.execute(
             update(Session).where(Session.id == session.id).values(last_used_at=now)
         )
+        await db.commit()
     return session, user
 
 

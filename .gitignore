@@ -60,6 +60,11 @@ blob-report/
 playwright/.cache/
 test-results/
 
+# Raw Playwright recordings. These are the *input* to scripts/build-videos.sh,
+# not the deliverable — the finished mp4s live in videos/ and are committed.
+# ~36 MB of VP8 that regenerates in six minutes; no reason to version it.
+frontend/videos-raw/
+
 # ─── Database ─────────────────────────────────────────────────────────────────
 # Postgres volumes when not using named volumes
 *.sqlite

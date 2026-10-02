@@ -8,6 +8,15 @@ import type { AppNotification } from '../api/types'
 import { useSession } from '../hooks/session'
 import { useSocketListener } from '../hooks/websocket'
 
+/** Fired whenever something marks notifications read.
+ *
+ * The bell and the notifications page read the same data, and the bell's whole
+ * promise is that its badge cannot disagree with the page it links to
+ * (specs/07 §6). Without this, "Mark all read" cleared the page and left the
+ * badge saying 3 until a full reload.
+ */
+export const NOTIFICATIONS_CHANGED = 'notifications:changed'
+
 export function NotificationBell() {
   const { user } = useSession()
   const [count, setCount] = useState(0)
@@ -34,6 +43,13 @@ export function NotificationBell() {
 
   // Live toasts arrive on the user's own socket topic — no subscribe needed.
   useSocketListener('notification', () => void load())
+
+  // Read state changed elsewhere, so the count changed too.
+  useEffect(() => {
+    const reload = () => void load()
+    window.addEventListener(NOTIFICATIONS_CHANGED, reload)
+    return () => window.removeEventListener(NOTIFICATIONS_CHANGED, reload)
+  }, [])
 
   useEffect(() => {
     const onClick = (e: MouseEvent) => {

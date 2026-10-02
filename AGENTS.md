@@ -14,7 +14,7 @@ developers who are studying alongside them on the same bootcamp.
 - **Team:** Ben, Joey, James, Alys, Mick
 - **Current phase:** all nine required features implemented, 2 October 2026
 
-**State.** 233 backend tests, 26 frontend component tests, 11 E2E tests pass.
+**State.** 235 backend tests, 26 frontend component tests, 11 E2E tests pass.
 `tsc --noEmit` is clean. Every feature spec carries an *As built* section
 documenting its deviations; `roadmap.md` §Status summary has the totals and the
 two known gaps.
@@ -100,7 +100,12 @@ frontend/
     routes/
     hooks/            session, useQuery, websocket (one socket per page)
   tests/              Playwright E2E + global setup (resets demo data first)
+  tests-videos/       Playwright recordings: one per feature, two-window pairs
+  playwright.videos.config.ts   recording config (video on, 1280x800)
 docker-compose.yml
+scripts/
+  build-videos.sh     composites the two-window pairs, converts to mp4
+videos/              generated evidence videos — see handoff.md §6
 ```
 
 ---

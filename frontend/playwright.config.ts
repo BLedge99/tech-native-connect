@@ -15,7 +15,14 @@ export default defineConfig({
   retries: process.env.CI ? 1 : 0,
   // Live chat depends on the socket being open; a tight timeout hides the bug
   // rather than fixing it.
-  timeout: 30_000,
+  //
+  // 90s, not 30s. The demo-path test drives a whole journey — two registrations,
+  // two profile completions, a match, a request, an accept, two threads, four
+  // messages and a reload — and measures ~33s on this machine. It was set to
+  // 30s, so it failed roughly one run in five while passing every assertion,
+  // which is the worst possible failure: a flaky centrepiece. A genuine hang
+  // still fails, because a hang runs to 180s+.
+  timeout: 90_000,
   expect: { timeout: 10_000 },
   reporter: process.env.CI ? 'github' : [['list']],
   use: {

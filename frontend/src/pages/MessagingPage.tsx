@@ -78,11 +78,30 @@ export function ThreadPage() {
   const atBottom = useRef(true)
   const newestToast = useRef(false)
 
+  // Merge, never replace.
+  //
+  // A refetch used to overwrite the list wholesale, which lost anything that
+  // arrived while it was in flight: send a message while the "socket opened,
+  // refetch history" effect is still running and your own message disappears
+  // from your screen until the next reload — the POST succeeded, the composer
+  // cleared, and there is no bubble. The server never sends the sender a socket
+  // frame for its own message, so nothing puts it back.
+  //
+  // Messages are never deleted in this app, so a union cannot go stale.
   const loadHistory = async () => {
     if (!threadId) return
     try {
       const page = await msgApi.history(threadId)
-      setMessages([...(page.items ?? [])].reverse())
+      setMessages((prev) => {
+        const byId = new Map(prev.map((m) => [m.id, m]))
+        for (const m of page.items ?? []) {
+          const existing = byId.get(m.id)
+          // A pending entry is the optimistic copy; the server copy is not an
+          // improvement over it.
+          byId.set(m.id, existing?.pending ? existing : m)
+        }
+        return [...byId.values()].sort((a, b) => a.created_at.localeCompare(b.created_at))
+      })
       setError(null)
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not load messages.')

@@ -14,19 +14,25 @@ code is actually in**, which is not derivable from the specs.
 
 | Suite | Command | Result |
 |---|---|---|
-| Backend unit + integration | `docker compose exec -T backend pytest tests` | **233 passed** (~6 min) |
+| Backend unit + integration | `docker compose exec -T backend pytest tests` | **235 passed** (~5.5 min) |
 | Frontend components | `docker compose exec -T frontend npx vitest run` | **26 passed** |
 | Frontend typecheck | `docker compose exec -T frontend npx tsc --noEmit` | clean |
-| E2E (Playwright) | `docker compose exec -T frontend npx playwright test` | **11 passed**, ~1 flake in 5 runs (§5.1) |
+| E2E (Playwright) | `docker compose exec -T frontend npx playwright test` | **11 passed** (~2 min) |
+| Evidence recordings (separate) | `docker compose exec -T frontend npx playwright test -c playwright.videos.config.ts` | **10 passed** (~5.5 min) — see §6 |
 
-Re-verified in full 2 Oct after the documentation pass: 230 backend passed
-(~6m42s), 26 component tests passed, `tsc --noEmit` clean.
+Re-verified in full after the documentation pass: 230 backend passed (~6m42s),
+26 component tests passed, `tsc --noEmit` clean.
 
 Re-verified again 2 Oct after the session/logout fixes below: **233 backend
 passed, 26 component tests passed, `tsc --noEmit` clean, 11 E2E passed**, and
 `docker compose logs backend` shows **zero** `Unhandled error` /
 `StaleDataError` / `Content-Length` entries for the whole E2E run. Previously
 every logout logged one.
+
+Re-verified a third time 2 Oct after the second bug hunt and the video work:
+**235 backend passed, 26 component tests passed, `tsc --noEmit` clean, 11 E2E
+passed, 10 recordings passed.** The extra two backend tests are the two new
+bugs in §3.
 
 ---
 
@@ -120,6 +126,37 @@ logs backend | grep -i unhandled` found three real bugs that 263 passing tests
 had missed, because every one of them happened *after* a successful response or
 on a race the tests never provoke.
 
+### 3b. Five more bugs, found while building the video suite
+
+Same method — drive the app for real and read what the server says. Every one
+of these was live in the demo and invisible to the existing tests. **None of
+them is a cosmetic issue: three were features that did not work at all.**
+
+| Bug | Symptom | Fix |
+|---|---|---|
+| **Magic link 500'd for every real user** | `send_magic_link` is sync but the route awaited it. Python evaluated the call — **sending the mail** — then raised `TypeError: object bool can't be used in 'await' expression`. So the link arrived and the user got a 500 and no confirmation. Spec 02, on the one auth path that had no test | `send_magic_link` is `async` and hands the blocking smtplib call to `anyio.to_thread.run_sync` |
+| **"Mark all read" never worked** | `PATCH /notifications/read-all` returned `422`. `@router.patch("/{notification_id}")` was declared *first*, so FastAPI matched it and tried to parse `read-all` as a UUID. The button did nothing, silently | Literal `/read-all` moved above the parameterised route |
+| **Bell badge ignored "Mark all read"** | The page refetched, the bell did not — so the badge still said "3 unread" after everything was read. The bell's own comment promises the badge "cannot disagree with the page it links to" (specs/07 §6). It could | Page dispatches a `notifications:changed` window event; the bell listens and re-counts |
+| **A message could vanish from your own screen** | `loadHistory` overwrote the message list wholesale. Send while the "socket opened → refetch history" effect is still in flight and your own message disappears: the POST returned 201, the composer cleared, no bubble. Nothing puts it back, because the sender never gets a socket frame for its own message | `loadHistory` merges by id instead of replacing. Messages are never deleted, so a union cannot go stale |
+| **The centrepiece E2E test was over budget** | `timeout: 30_000`, actual ~33s. It failed roughly 1 run in 5 while every assertion had passed — this *was* the flake in §5.1 | Timeout raised to 90s, with a comment saying why |
+
+Two more regression tests in `tests/integration/test_rules.py`: the magic link
+returns 202 for a real account, and `read-all` actually clears the badge while
+leaving the list intact.
+
+**The route-ordering trap is worth checking any time a router gains a literal
+path.** It was audited across all nine routers afterwards and
+`/notifications/read-all` was the only instance.
+
+**Also caught: a regression I introduced.** The `last_used_at` throttle in §3
+was written as a Core `UPDATE` and never committed. Nothing else commits on a
+read-only request, so `last_used_at` never advanced — every later request
+rewrote it and held a row lock on the session for the life of the request. It
+locked the E2E suite hard enough to hang a run for 180s. The fix is one line
+(`await db.commit()`), with a comment explaining why committing that early is
+safe. **Worth remembering that "uncommitted" and "harmless" are not the same
+thing.**
+
 Also: `require_session` returns a tuple (three call sites had got this wrong),
 error messages were empty because the message string sat *after* an assignment
 so was not a docstring, and `/users/{id}` shadowed `/users/me`.
@@ -136,45 +173,46 @@ so was not a docstring, and `/users/{id}` shadowed `/users/me`.
   and is not one.
 - **`services/pagination.py` is new.**
 - `ConnectionAction` gained `threadId` and `onOpenThread`.
+- **`ThreadPage.loadHistory` merges instead of replacing** (§3b). If you touch
+  message rendering, keep that.
+- **`NOTIFICATIONS_CHANGED`** is exported from `components/Notifications.tsx`
+  and dispatched by `NotificationsPage` on both read paths. Anything else that
+  marks notifications read must dispatch it too, or the badge drifts again.
 
 ---
 
 ## 5. Known issues
 
-### 5.1 The live-chat flake — investigated 2 Oct, could not reproduce
+### 5.1 The live-chat flake — root cause found 2 Oct
 
 `the demo path › request → accept → message, live in two windows`
 
-Previously failed inside `openConversation` at
-`await expect(page.getByLabel('Message')).toBeVisible()`, roughly 1 run in 5.
-**It did not reproduce once in 9 runs**: 8 consecutive isolated runs plus a
-full-suite run, and then 5 further consecutive full-suite runs — 55 executions
-of the centrepiece test, all green.
+**It was never a socket race. It was the test timeout.** The config had
+`timeout: 30_000`; the test measures ~33s on this machine. It failed with
+`Test timeout of 30000ms exceeded` while every single assertion had already
+passed — the failure point moved around from run to run (once on the profile
+form, once on the connections page, once on the thread), which is the signature
+of a budget problem rather than a logic problem. Confirmed by running it with
+`--timeout=45000`: **passed in 32.9s**. Fixed by raising the budget to 90s,
+which still fails a genuine hang, because a hang runs past 180s.
 
-The original guess in this file was socket subscription timing. That guess is
-**wrong**, and it should not be acted on:
+The earlier guess recorded here — socket subscription timing — was wrong, and
+the reasoning against it is worth keeping:
 
 - The failure was at composer *visibility*, not at the later live-delivery
-  assertion. A subscription race cannot stop the composer rendering — the
+  assertion. A subscription race cannot stop the composer rendering; the
   composer is not gated on socket state.
 - `useThreadSubscription` cannot lose a subscription: `subscribe()` records the
   thread in `wanted` whether or not the socket is open yet, and `onopen`
-  re-sends every entry in `wanted` after a reconnect. There is no window in
-  which a subscription is silently dropped.
-- Most likely the flake was already fixed by `tests/global-setup.ts`, which is
-  new in this same session and was added precisely because accumulated test
-  users made `.first()` selectors ambiguous. The 1-in-5 figure was measured
-  before it landed and never re-measured.
+  re-sends every entry in `wanted` after a reconnect.
 
-One real defect *did* present exactly like this flake, and is now fixed — see
-§3, `ConnectionsPage` swallowing its failure in an `alert()`. A transient error
-on `POST /connections/{id}/thread` meant the click silently did nothing. That
-plus the `StaleDataError` 500s above are the plausible triggers; both are gone.
+Two real defects *did* present exactly like this flake and are now fixed — the
+`ConnectionsPage` `alert()` in §3, and the message-vanishing bug in §3b.
 
-**Do not add a blanket retry or a `waitForTimeout` to hide this.** If it comes
-back, `frontend/test-results/*/error-context.md` holds the accessibility tree
-at the moment of failure — that will say which of the two it was. The test is
-the demo's centrepiece; a slow centrepiece beats a flaky one.
+**Do not add a blanket retry or a `waitForTimeout` to hide anything here.** If a
+timeout comes back, `frontend/test-results/*/error-context.md` holds the
+accessibility tree at the moment of failure, and it will usually name the step.
+The test is the demo's centrepiece; a slow centrepiece beats a flaky one.
 
 ### 5.2 Everything else
 
@@ -185,10 +223,17 @@ the demo's centrepiece; a slow centrepiece beats a flaky one.
   reloads. Cosmetic.
 - **`useQuery` spreads `deps` into a dependency array.** Works, cannot be
   statically verified, ESLint will flag it.
-- **Magic link flow has no E2E test.** Mailpit's REST API
-  (`GET /api/v1/messages`) makes this easy. It is the one auth path with no
-  browser-level coverage.
+- **Magic link has no E2E test in `tests/`.** It now has an integration test
+  (§3b) and is driven end-to-end by recording 02, so it is no longer untested —
+  but there is still nothing in the normal suite that would catch a regression
+  in the browser flow. Mailpit's REST API (`GET /api/v1/messages`) makes this
+  easy; see `fetchMagicLink()` in `tests-videos/helpers.ts` for the extraction.
 - **`AdminPage` and `IdeaFormPage`/`IdeaDetailPage` have no component tests.**
+- **`AdminPage` and `IdeasPage` still call native `alert()` on failure.** The
+  app degrades fine, but a dialog blocks the page, and Playwright
+  auto-dismisses dialogs — so a failure there is invisible to a test. This is
+  the same class of bug as the `ConnectionsPage` one in §3. `ConnectionsPage` is
+  fixed; these two are not.
 - **✅ Spec status lines updated.** All nine say *Implemented*, all nine have
   ticked Definition-of-done boxes, and every spec — plus `00_conventions.md` and
   all four `deferred_*.md` — now ends with a dated *As built* section. The
@@ -197,7 +242,72 @@ the demo's centrepiece; a slow centrepiece beats a flaky one.
 
 ---
 
-## 6. Deliberate deviations from the specs
+## 6. Evidence videos
+
+Nine recorded videos, one per feature, in `videos/`. Two of them put **two
+browsers side by side in one file** so live messaging is visible without
+cutting.
+
+```bash
+# 1. record (~5.5 min, writes frontend/videos-raw/*.webm)
+docker compose exec -T frontend npx playwright test -c playwright.videos.config.ts
+
+# 2. composite + convert to mp4 (~1 min, writes videos/*.mp4)
+./scripts/build-videos.sh
+```
+
+| File | Feature | What it shows |
+|---|---|---|
+| `01-landing-page-the-pitch-logged-out.mp4` | spec 01 | The pitch, the three steps, the CTA |
+| `02-registration-login-and-magic-link.mp4` | spec 02 | Sign up, sign in, sign out, and a real magic link pulled out of Mailpit and followed |
+| `03-profile-building-one-from-nothing.mp4` | spec 03 | The locked gate, role/skills/interests/course/bio, a real PNG upload, the finished profile |
+| `04-matching-and-search.mp4` | spec 04 | Ranked matches with reasons, role filter, skill and interest search, a full public profile, sending a request |
+| `05-connection-requests-two-windows-side-by-side.mp4` | spec 05 | **Two browsers.** A signs up, finds B, requests; B sees it and accepts. Includes rule 2 — A cannot message until B accepts |
+| `07-live-messaging-two-windows-side-by-side.mp4` | spec 06 | **Two browsers, the centrepiece.** Same thread in both, live delivery each way, both windows reload, still live |
+| `08-notifications.mp4` | spec 07 | The badge, the dropdown, the grouped page, mark all read clearing the badge |
+| `09-project-ideas-board.mp4` | spec 08 | Browsing, filtering, a business developer posting, then a developer finding it and expressing interest |
+| `10-admin-screens.mp4` | spec 09 | 403 for a non-admin, then overview, user search, audit log, reference data |
+
+There is no `06` file: spec 06 is covered by `07`, which is the two-window
+messaging recording.
+
+### How it works
+
+- **Captions are a DOM overlay**, not an ffmpeg `drawtext` filter — `say()` in
+  `tests-videos/captions.ts` injects a bar at the bottom of the page and lifts
+  the app clear of it with `body { padding-bottom }`. An overlay across the top
+  hid the app's own nav on every page, and the nav is part of the evidence.
+- **Two windows are two browser contexts** with separate cookie jars.
+  `twoWindows()` gives each one `recordVideo`, labels it with a page global, and
+  navigates it immediately so no panel is ever a blank white rectangle.
+- **ffmpeg runs in a container** (`jrottenberg/ffmpeg:7-ubuntu`). The host has
+  none, and the copy bundled with Playwright is stripped to `scale` and VP8 — no
+  `hstack`, no `libx264`. `build-videos.sh` pads both panes with `tpad` before
+  stacking, because the two recordings do not stop at the same millisecond.
+
+### Gotchas that cost real time here
+
+- **`page.video().saveAs()` deadlocks** if the page is still open — it waits for
+  the video to be finalised, and fixtures tear down in reverse order, so the page
+  is still alive. `tests-videos/record.ts` closes the context first.
+- **The recordings must be repeatable.** They assert exact message counts, so
+  `resetThread()` and `deleteIdeasTitled()` in `tests-videos/helpers.ts` wipe
+  prior runs' leftovers first. Every helper there that mutates demo data is
+  scoped to exact values; there is no API for it and there should not be one.
+- **A receiver only gets live delivery while it is sitting on the thread page.**
+  Navigating the second window to `/messages` (the list) unsubscribes it, and a
+  message sent after that will not appear. This looks exactly like a broken
+  socket and is not — it cost a full debugging cycle.
+- **Fresh test users accumulate.** `"Tomas Nowak T82"` from an earlier run made
+  a `getByRole('heading', {name: /Tomas/})` ambiguous. The video config reuses
+  `tests/global-setup.ts`, and seeded names are matched with `exact: true`.
+- **`videos/` and `frontend/videos-raw/` are untracked and not gitignored.**
+  Roughly 4.7 MB of mp4. Decide whether to commit them before the demo or
+  regenerate them; do not leave them showing up as noise in `git status`.
+
+---
+
+## 7. Deliberate deviations from the specs
 
 Five, all additive. None is a bug.
 
@@ -216,29 +326,48 @@ section citing it: `specs/02` §13.1–13.2, `specs/05` §11.1, `specs/06` §10.
 
 ---
 
-## 7. Not done
+## 8. Not done
 
 | Missing | Where | Priority |
 |---|---|---|
-| ~~Fix the live-chat flake~~ | §5.1 | ✅ Not reproducible in 9 runs, 2 Oct. Real defects that mimicked it were found and fixed in §3 |
+| ~~Fix the live-chat flake~~ | §5.1 | ✅ Root cause found and fixed 2 Oct — the timeout was too low, not a socket race |
 | ~~Update spec Implementation status + roadmap checkboxes~~ | §5.2 | ✅ Done 2 Oct |
-| Magic-link E2E test | §5.2 | Medium |
+| ~~Magic link 500, mark-all-read 422, stale badge, vanishing message~~ | §3b | ✅ All four fixed 2 Oct, with regression tests |
+| Decide whether `videos/` gets committed | §6 | **Medium** — the demo is on 15 Oct and these are the evidence |
+| Component test for the `loadHistory` merge | §3b | Medium — fixed by evidence, not by a test that fails without the fix |
+| Magic-link E2E test in `tests/` | §5.2 | Medium |
+| Replace native `alert()` in `AdminPage` / `IdeasPage` | §5.2 | Medium — same class as the §3 bug, still unfixed |
 | `IdeaFormPage` → `useNavigate`, `Linkish` → `<Link>` | §5.2 | Low |
 | Admin / ideas component tests | §5.2 | Low |
 | Single `docker compose` command that runs all four suites | — | Low |
 
+**Suggested, not started.** None of these are in `deferred_*.md`, so they are
+yours to scope rather than forbidden:
+
+- A single continuous "demo path" take — sign up through to live message in one
+  uncut video. The per-feature videos are better evidence; this is better theatre.
+- Component tests for `ThreadPage`, `NotificationsPage` and `ConnectionsPage`.
+  The merge in §3b and the inline error in §3 are both logic that no HTTP test
+  can pin down.
+- A route-shadowing guard in the integration suite: assert that every literal
+  path in every router is reachable, so §3b's class of bug cannot come back.
+
 ---
 
-## 8. First 30 minutes for whoever is next
+## 9. First 30 minutes for whoever is next
 
 ```bash
 docker compose up -d --build
 curl localhost:8000/api/v1/health          # {"status":"ok","database":"ok"}
 
-docker compose exec -T backend pytest tests               # 233 passed, ~6 min
+docker compose exec -T backend pytest tests               # 235 passed, ~5.5 min
 docker compose exec -T frontend npx vitest run            # 26 passed
 docker compose exec -T frontend npx tsc --noEmit           # clean
 docker compose exec -T frontend npx playwright test       # 11 passed
+
+# optional: re-record the evidence videos (§6)
+docker compose exec -T frontend npx playwright test -c playwright.videos.config.ts
+./scripts/build-videos.sh
 ```
 
 If a Playwright failure is mysterious, read
@@ -257,7 +386,7 @@ All demo users are in `backend/app/seed.py`.
 
 ---
 
-## 9. Things that will bite you
+## 10. Things that will bite you
 
 - **Restart the frontend container after editing frontend source.** The bind
   mount is live but Vite's HMR does not reliably pick up changes on this
@@ -283,9 +412,17 @@ All demo users are in `backend/app/seed.py`.
   "Messages".** Use `exact: true`. This cost an hour.
 - **A green suite is not a quiet server.** Check
   `docker compose logs backend | grep -iE "unhandled|staledata|traceback"`
-  after a run. Three real bugs lived there while all four suites passed,
-  because each one fired *after* a successful response or on a race no test
-  provokes.
+  after a run. Seven real bugs lived there while all four suites passed,
+  because each one fired *after* a successful response, on a race the tests
+  never provoke, or on a route no test calls.
+- **A passing test is not a working feature either.** Three features were
+  simply broken — magic link, mark all read, and the bell badge — with full
+  suites green. Coverage counted the calls; nothing checked the outcome. When
+  adding a test, assert the *user-visible result*, not that the endpoint
+  responds.
+- **Check a failure's position across runs.** The centrepiece flake moved
+  between the profile form, the connections page and the thread. A moving
+  failure point means a budget or timing problem, not a logic bug.
 - **`backend/tests/conftest.py` sets `DATABASE_URL` before importing app
   config.** The engine is built at import time; redirecting afterwards points
   tests at the dev database.

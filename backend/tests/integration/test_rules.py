@@ -379,6 +379,17 @@ async def test_magic_link_does_not_reveal_whether_email_exists(client):
     assert known.text == unknown.text
 
 
+async def test_magic_link_for_a_real_account_returns_202(auth, client):
+    """The bug this catches: send_magic_link was sync but awaited, so the mail
+    went out and the request still 500'd. The unknown-address case above cannot
+    see it, because that branch never sends anything — which is exactly why the
+    magic-link flow had no coverage and was broken."""
+    user = await auth(display_name="Link Recipient")
+    response = await client.post("/api/v1/auth/magic-link", json={"email": user["email"]})
+    assert response.status_code == 202, response.text
+    assert response.json()["message"]
+
+
 async def test_profile_field_length_caps(auth):
     a = await auth()
     response = await a["client"].patch(
@@ -509,6 +520,29 @@ async def test_mark_read_clears_the_badge(auth):
         f"/api/v1/notifications/{listed['id']}", json={"read": True}, headers=b["csrf"]
     )
     assert (await b["client"].get("/api/v1/notifications/unread-count")).json()["unread_count"] == 0
+
+
+async def test_mark_all_read_clears_the_badge(auth):
+    """Regression: "/read-all" was declared after "/{notification_id}", so
+    FastAPI matched the parameterised route first and tried to parse "read-all"
+    as a UUID. The button 422'd and nothing was ever marked read."""
+    a = await auth(display_name="Alice")
+    b = await auth(display_name="Bob")
+    c = await auth(display_name="Carol")
+    for peer in (b, c):
+        await a["client"].post(
+            "/api/v1/connections", json={"receiver_id": peer["id"]}, headers=a["csrf"]
+        )
+    assert (await b["client"].get("/api/v1/notifications/unread-count")).json()["unread_count"] == 1
+
+    response = await b["client"].patch("/api/v1/notifications/read-all", headers=b["csrf"])
+    assert response.status_code == 204, response.text
+    assert (await b["client"].get("/api/v1/notifications/unread-count")).json()["unread_count"] == 0
+
+    # Still a real route, not a swallowed one: the list is unchanged, only read.
+    listed = (await b["client"].get("/api/v1/notifications")).json()["items"]
+    assert len(listed) == 1
+    assert listed[0]["read_at"] is not None
 
 
 async def test_notification_urls_are_relative(auth):

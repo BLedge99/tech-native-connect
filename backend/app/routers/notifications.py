@@ -55,6 +55,14 @@ async def get_notification(
     return notification_out(await svc.get_own(db, user.id, notification_id))
 
 
+@router.patch("/read-all", status_code=204, dependencies=[Depends(require_csrf)])
+async def mark_all_read(
+    user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)
+):
+    await svc.mark_all_read(db, user.id)
+    return None
+
+
 @router.patch("/{notification_id}", response_model=NotificationOut, dependencies=[Depends(require_csrf)])
 async def mark_read(
     notification_id: uuid.UUID,
@@ -66,14 +74,6 @@ async def mark_read(
     conflict, so this is 200 both times."""
     row = await svc.mark_read(db, user.id, notification_id)
     return notification_out(row)
-
-
-@router.patch("/read-all", status_code=204, dependencies=[Depends(require_csrf)])
-async def mark_all_read(
-    user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)
-):
-    await svc.mark_all_read(db, user.id)
-    return None
 
 
 __all__ = ["router"]
