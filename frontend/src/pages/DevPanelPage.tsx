@@ -12,6 +12,12 @@ interface Service {
   url: string
   icon: string
   category: 'app' | 'infra' | 'docs'
+  credentials?: {
+    server: string
+    username: string
+    password: string
+    database: string
+  }
 }
 
 const SERVICES: Service[] = [
@@ -42,6 +48,12 @@ const SERVICES: Service[] = [
     url: 'http://localhost:8080',
     icon: '🗄️',
     category: 'infra',
+    credentials: {
+      server: 'db',
+      username: 'bootcamp',
+      password: 'bootcamp',
+      database: 'bootcamp_connect',
+    },
   },
   {
     name: 'Backend API',
@@ -122,6 +134,20 @@ function ServiceCard({ service }: { service: Service }) {
           <h3 className="font-semibold text-slate-900">{service.name}</h3>
           <p className="mt-1 text-sm text-slate-600">{service.description}</p>
           <p className="mt-2 truncate text-xs text-slate-400">{service.url}</p>
+          {service.credentials && (
+            <div className="mt-3 rounded-lg bg-slate-50 p-3 text-xs text-slate-600">
+              <div className="grid grid-cols-2 gap-1">
+                <span className="font-medium text-slate-500">Server:</span>
+                <span className="font-mono">{service.credentials.server}</span>
+                <span className="font-medium text-slate-500">Username:</span>
+                <span className="font-mono">{service.credentials.username}</span>
+                <span className="font-medium text-slate-500">Password:</span>
+                <span className="font-mono">{service.credentials.password}</span>
+                <span className="font-medium text-slate-500">Database:</span>
+                <span className="font-mono">{service.credentials.database}</span>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </a>
