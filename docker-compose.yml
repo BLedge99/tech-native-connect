@@ -87,14 +87,30 @@ services:
 
   # ─── Dev DB GUI ──────────────────────────────────────────────────────────
   # Adminer — lightweight single-file Postgres GUI for development.
+  # ─── Dev DB GUI ──────────────────────────────────────────────────────────
+  # Adminer — lightweight single-file Postgres GUI for development.
+  #
+  # index.php is replaced wholesale (a copy of the stock one plus autologin).
+  # It MUST keep its own adminer_object() declaration — putting that function in
+  # a separate file too is a fatal "Cannot redeclare function" error.
+  # ADMINER_DEFAULT_DB is bootcamp_connect with an UNDERSCORE; the hyphenated
+  # "bootcamp-connect" spelling does not exist and login fails.
   adminer:
     image: adminer:latest
     ports:
       - "8080:8080"
+    volumes:
+      - ./adminer/index.php:/var/www/html/index.php:ro
+      - ./adminer/plugins-enabled:/var/www/html/plugins-enabled:ro
     environment:
+      ADMINER_DEFAULT_DRIVER: pgsql
       ADMINER_DEFAULT_SERVER: db
+      ADMINER_DEFAULT_USERNAME: ${POSTGRES_USER:-bootcamp}
+      ADMINER_DEFAULT_PASSWORD: ${POSTGRES_PASSWORD:-bootcamp}
+      ADMINER_DEFAULT_DB: ${POSTGRES_DB:-bootcamp_connect}
     depends_on:
-      - db
+      db:
+        condition: service_healthy
 
 volumes:
   pgdata:

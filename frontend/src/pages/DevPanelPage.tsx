@@ -44,8 +44,10 @@ const SERVICES: Service[] = [
   },
   {
     name: 'Database',
-    description: 'Adminer — web GUI for Postgres',
-    url: 'http://localhost:8080',
+    // Autologin is configured in adminer/plugins-enabled, so these land
+    // already signed in. The db= param is what selects the project database.
+    description: 'Adminer — web GUI for Postgres (auto sign-in)',
+    url: 'http://localhost:8080/?pgsql=db&username=bootcamp&db=bootcamp_connect',
     icon: '🗄️',
     category: 'infra',
     credentials: {

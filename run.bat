@@ -31,6 +31,7 @@ if "%CMD%"=="down" goto down
 if "%CMD%"=="logs" goto logs
 if "%CMD%"=="clean" goto clean
 if "%CMD%"=="panel" goto panel
+if "%CMD%"=="devcheck" goto devcheck
 goto help
 
 :dev
@@ -39,6 +40,15 @@ goto end
 
 :panel
 start http://localhost:5173/dev
+goto end
+
+REM Dev-tooling contract tests: Adminer, Mailpit, dev panel, videos.
+REM These must run inside the compose network, so they are executed in the
+REM frontend container and target service hostnames (adminer:8080) rather than
+REM published localhost ports.
+:devcheck
+%DOCKER_CMD% compose exec -T frontend npx playwright install chromium
+%DOCKER_CMD% compose exec -T frontend npx playwright test -c playwright.devtools.config.ts
 goto end
 
 :build
@@ -58,13 +68,14 @@ goto end
 goto end
 
 :help
-echo Usage: run.bat [dev^|build^|down^|logs^|clean^|panel]
-echo   dev    - Build and start all services (default)
-echo   build  - Build images only
-echo   down   - Stop services
-echo   logs   - Follow logs
-echo   clean  - Stop and delete all data
-echo   panel  - Open the dev panel in your browser
+echo Usage: run.bat [dev^|build^|down^|logs^|clean^|panel^|devcheck]
+echo   dev      - Build and start all services (default)
+echo   build    - Build images only
+echo   down     - Stop services
+echo   logs     - Follow logs
+echo   clean    - Stop and delete all data
+echo   panel    - Open the dev panel in your browser
+echo   devcheck - Test Adminer, Mailpit and the dev panel end to end
 
 :end
 endlocal
