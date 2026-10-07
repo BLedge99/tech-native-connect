@@ -21,6 +21,7 @@ import { MessagesPage, ThreadPage } from '../pages/MessagingPage'
 import { NotificationsPage } from '../pages/NotificationsPage'
 import { ProfileEditPage, ProfilePage } from '../pages/ProfilePages'
 import { ConnectionsPage } from '../pages/ConnectionsPage'
+import { DevPanelPage } from '../pages/DevPanelPage'
 
 function useSessionState() {
   const [user, setUser] = useState<Me | null>(null)
@@ -325,6 +326,9 @@ export function App() {
                 </RequireAdmin>
               }
             />
+
+            {/* Dev panel — no auth required, development tool only */}
+            <Route path="/dev" element={<DevPanelPage />} />
 
             <Route path="*" element={<NotFound />} />
         </Routes>

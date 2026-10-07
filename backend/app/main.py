@@ -72,6 +72,11 @@ app.include_router(notifications.router)
 app.include_router(ideas.router)
 app.include_router(admin.router)
 
+# Dev-only routes (video serving for the dev panel)
+if settings.app_env == "development":
+    from app.dev import router as dev_router
+    app.include_router(dev_router)
+
 
 @app.exception_handler(Exception)
 async def unhandled_error_handler(request: Request, exc: Exception):

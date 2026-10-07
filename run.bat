@@ -6,17 +6,19 @@ REM Works with: Docker Desktop (Windows), Docker Desktop (WSL2 backend),
 REM and docker installed inside WSL.
 set "DOCKER_CMD=docker"
 
-where docker >nul 2>&1
+REM Test if docker actually works (not just if it exists on PATH)
+docker info >nul 2>&1
 if errorlevel 1 (
-    REM docker not on Windows PATH — try WSL
-    where wsl >nul 2>&1
+    REM docker command failed — try WSL
+    wsl docker info >nul 2>&1
     if errorlevel 1 (
-        echo ERROR: docker is not installed and WSL is not available.
+        echo ERROR: docker is not available.
+        echo Make sure Docker Desktop is running, or docker is installed in WSL.
         echo Install Docker Desktop: https://www.docker.com/products/docker-desktop/
         exit /b 1
     )
     set "DOCKER_CMD=wsl docker"
-    echo [run.bat] docker not found on Windows PATH — using WSL.
+    echo [run.bat] docker not working on Windows — using WSL.
 )
 
 REM ── Parse command ──────────────────────────────────────────────────────────
@@ -28,10 +30,15 @@ if "%CMD%"=="build" goto build
 if "%CMD%"=="down" goto down
 if "%CMD%"=="logs" goto logs
 if "%CMD%"=="clean" goto clean
+if "%CMD%"=="panel" goto panel
 goto help
 
 :dev
 %DOCKER_CMD% compose up --build
+goto end
+
+:panel
+start http://localhost:5173/dev
 goto end
 
 :build
@@ -51,12 +58,13 @@ goto end
 goto end
 
 :help
-echo Usage: run.bat [dev^|build^|down^|logs^|clean]
+echo Usage: run.bat [dev^|build^|down^|logs^|clean^|panel]
 echo   dev    - Build and start all services (default)
 echo   build  - Build images only
 echo   down   - Stop services
 echo   logs   - Follow logs
 echo   clean  - Stop and delete all data
+echo   panel  - Open the dev panel in your browser
 
 :end
 endlocal
