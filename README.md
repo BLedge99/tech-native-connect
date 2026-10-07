@@ -10,33 +10,51 @@ business developers want someone who can build the thing they keep describing.
 This app lists the people on your course, ranks the ones you overlap with, and
 tells you why.
 
-**Status:** all nine features implemented, 2 October 2026. 235 backend tests,
-26 component tests, 11 E2E tests. Demo target 15 October 2026.
+**Status:** all nine features implemented. 240 backend tests, 26 component tests,
+11 E2E tests, 10 evidence recordings. Demo target 15 October 2026.
 
 ---
 
-## Documentation
+## Quick start
 
-Every feature listed below is implemented, and every spec carries an *As
-built* section recording where the build differs from what was specified — so
-these documents describe the code, not an aspiration.
+Requires Docker Desktop (WSL2 backend supported).
 
-| Start here | What it gives you |
+```powershell
+.\run.bat              # build + start everything
+.\run.bat panel        # open the dev panel at http://localhost:5173/dev
+```
+
+That's it. First build takes a few minutes (Python wheels, npm install). After
+that, `run.bat` is enough.
+
+| Command | What it does |
 |---|---|
-| **[`AGENTS.md`](AGENTS.md)** | **Read this first.** Tech stack, conventions, the six non-negotiable product rules, how to work. |
-| **[`handoff.md`](handoff.md)** | Live build state, known bugs, and the gotchas that will cost you an hour. |
-| [`PRD.md`](PRD.md) | Who the app serves, what it does, what is in and out of scope, success criteria. |
-| [`roadmap.md`](roadmap.md) | The nine features in dependency order, each with a finish line, plus the cut line. |
-| [`specs/`](specs/) | One document per feature, each ending with an *As built* section. |
-| [`decisions/`](decisions/) | Twelve architecture decision records. Start at [0001](decisions/0001-fastapi-and-react.md). |
+| `run.bat` / `run.bat dev` | Build and start all services |
+| `run.bat build` | Build images only |
+| `run.bat down` | Stop services (keeps data) |
+| `run.bat clean` | Stop and delete all data |
+| `run.bat logs` | Follow logs |
+| `run.bat panel` | Open the dev panel in your browser |
 
-### The demo path
+### Services
 
-> sign up → complete profile → browse matches → send request → accept → message → see notification
+| Service | URL |
+|---|---|
+| Frontend | http://localhost:5173 |
+| Backend API | http://localhost:8000 |
+| API docs (Swagger) | http://localhost:8000/docs |
+| Mailpit inbox | http://localhost:8025 |
+| Adminer (DB GUI) | http://localhost:8080 |
+| Dev panel | http://localhost:5173/dev |
 
-Live updates are the centrepiece. Open two browser windows and a message sent on
-one appears on the other with no refresh. A chat thread only opens when both
-people have accepted — expressing interest is not permission to message.
+### Demo logins
+
+| Email | Password | Role |
+|---|---|---|
+| `priya@example.com` | `demo-password-123` | Business developer |
+| `ben@bootcamp.example.com` | `bootcamp-dev-admin` | Admin |
+
+---
 
 ## Features
 
@@ -61,6 +79,38 @@ later without touching required code. Do not build these during the sprint.
 - [Privacy settings, deletion and export](specs/deferred_privacy_settings.md)
 - [Block, report, moderation queue](specs/deferred_safety_moderation.md)
 - [AI icebreaker suggestions](specs/deferred_ai_icebreakers.md)
+
+---
+
+## Admin panel
+
+The admin panel at `/admin` has four tabs:
+
+| Tab | What it does |
+|---|---|
+| **Overview** | Five counts: total users, active, new this week, connections made, project ideas |
+| **Users** | Search by email or name. Activate/deactivate, grant/revoke admin, view profile. Paginated with "Load more" |
+| **Reference** | Manage courses, skills, and interests. Add, rename (skills), delete (skills). Paginated |
+| **Audit** | Read-only log of admin actions with timestamp, action, target, and metadata. Paginated |
+
+Admin access is granted by an existing admin via the Users tab. Non-admins who
+try to reach `/admin` get a 403 page.
+
+---
+
+## Dev panel
+
+The dev panel at `/dev` is a development tool — not part of the product. It has
+two tabs:
+
+| Tab | What it does |
+|---|---|
+| **Services** | Cards linking to every service (main site, API docs, Mailpit, Adminer, backend). Shows Adminer login credentials |
+| **Videos** | Grid of evidence recordings with `<video>` players, served from the backend |
+
+No authentication required. Only active when `APP_ENV=development`.
+
+---
 
 ## Tech stack
 
@@ -101,50 +151,12 @@ so break them deliberately or not at all.
 6. **The app degrades, it does not break.** If a non-essential feature fails,
    the page still renders.
 
-## Running it
-
-`.env` is gitignored; `.env.example` is committed. Copy it once if it is
-missing — `docker compose up` will not start without it.
-
-```bash
-cp .env.example .env                  # only if .env does not exist
-docker compose up -d --build          # full stack
-curl localhost:8000/api/v1/health     # {"status":"ok","database":"ok"}
-docker compose up -d db mailpit       # just infra; run apps on host for hot reload
-docker compose exec db psql -U bootcamp -d bootcamp_connect
-docker compose down -v                # reset, destroys data
-```
-
-First build takes a few minutes (Python wheels, npm install). After that,
-`docker compose up -d` is enough.
-
-| Service | URL |
-|---|---|
-| Frontend | http://localhost:5173 |
-| Backend API | http://localhost:8000 |
-| Swagger | http://localhost:8000/docs |
-| Mailpit inbox | http://localhost:8025 |
-| Postgres | localhost:5432 |
-
-Mailpit is a local fake mail server — no real email is ever sent. Magic links
-land in the web inbox.
-
-## Evidence videos
-
-Nine recorded videos, one per feature, in [`videos/`](videos/) — including two
-that put two browsers side by side in a single file, so live messaging is
-visible without cutting. [`handoff.md`](handoff.md) §6 explains how they are
-made and how to re-record them.
-
-```bash
-docker compose exec -T frontend npx playwright test -c playwright.videos.config.ts
-./scripts/build-videos.sh
-```
+---
 
 ## Tests
 
-```bash
-docker compose exec -T backend pytest tests                      # 235 passed
+```powershell
+docker compose exec -T backend pytest tests                      # 240 passed
 docker compose exec -T frontend npx vitest run                   # 26 passed
 docker compose exec -T frontend npx tsc --noEmit                 # clean
 docker compose exec -T frontend npx playwright test              # 11 passed
@@ -154,27 +166,33 @@ The E2E suite resets the demo data before each run. **Restart the frontend
 container after editing frontend source** — Vite's hot reload does not reliably
 pick up changes on this setup.
 
-## Working on it
+---
 
-1. Read [`handoff.md`](handoff.md) — it has the gotchas that will cost you an
-   hour otherwise.
-2. Read [`specs/00_conventions.md`](specs/00_conventions.md). It holds the error
-   shape, auth guards, pagination and naming that every spec assumes.
-3. Read your feature's spec. Features are numbered in **dependency** order — do
-   not start one whose prerequisite is unfinished.
-4. Branch `feat/<spec-number>-<slug>`, e.g. `feat/03-profiles`.
-5. Backend → frontend → tests. **Tests are part of done.**
-6. Open a PR referencing the spec number.
-7. **If your implementation differs from the spec, write it into the spec.** Add
-   an *As built* section. Do not leave it only in the code.
+## Evidence videos
 
-Work is not pre-assigned. Take the feature nobody has started.
+Ten recorded videos in [`videos/`](videos/), viewable in the dev panel. Two of
+them put two browsers side by side in a single file, so live messaging is
+visible without cutting.
 
-```bash
-feat/02-registration
-feat/03-profiles
-feat/04-matching
+```powershell
+docker compose exec -T frontend npx playwright test -c playwright.videos.config.ts
+./scripts/build-videos.sh
 ```
+
+---
+
+## Documentation
+
+| Start here | What it gives you |
+|---|---|
+| **[`AGENTS.md`](AGENTS.md)** | **Read this first.** Tech stack, conventions, the six non-negotiable product rules, how to work. |
+| **[`handoff.md`](handoff.md)** | Live build state, known bugs, and the gotchas that will cost you an hour. |
+| [`PRD.md`](PRD.md) | Who the app serves, what it does, what is in and out of scope, success criteria. |
+| [`roadmap.md`](roadmap.md) | The nine features in dependency order, each with a finish line, plus the cut line. |
+| [`specs/`](specs/) | One document per feature, each ending with an *As built* section. |
+| [`decisions/`](decisions/) | Twelve architecture decision records. Start at [0001](decisions/0001-fastapi-and-react.md). |
+
+---
 
 ## Repository layout
 
@@ -186,33 +204,18 @@ feat/04-matching
 ├── roadmap.md           what to build, in what order, and what is built
 ├── specs/               one doc per feature, plus deferred_*.md
 ├── decisions/           numbered ADRs
+├── run.bat              Windows wrapper for docker compose
 ├── backend/             FastAPI + SQLAlchemy + Alembic + pytest
-│   ├── app/             config, models, routers, services, realtime
-│   ├── alembic/         migrations — 0001_initial, hand-written
+│   ├── app/             config, models, routers, services, realtime, dev
+│   ├── alembic/         migrations
 │   └── tests/           unit/ and integration/
 ├── frontend/            Vite + React + TypeScript + Tailwind
 │   ├── src/             api/, hooks/, components/, pages/, routes/
 │   └── tests/           Playwright E2E and its global setup
-└── docker-compose.yml   db, mailpit, backend, frontend
+└── docker-compose.yml   db, mailpit, backend, frontend, adminer
 ```
 
-## Decisions worth knowing about
-
-Full reasoning in [`decisions/`](decisions/), but these three are the ones
-people are most likely to question:
-
-- **[0002 — PostgreSQL from day one](decisions/0002-postgres-not-sqlite.md).**
-  We considered SQLite now and Postgres later. The switch is not one line: it
-  breaks case-insensitive email, `bytea` photos, UUID generation, partial
-  indexes, timestamp handling, and concurrent writes. Six real differences, all
-  discovered on day thirteen.
-- **[0005 — Native WebSocket, in-process registry](decisions/0005-websocket-in-process.md).**
-  No Socket.IO, no Redis, no hosted realtime. The cost is a hard single-worker
-  requirement on uvicorn — it is written into the compose file on purpose.
-- **[0009 — Deterministic matching first](decisions/0009-deterministic-matching-first.md).**
-  Matching is weighted overlap over four signals, not an LLM. It is testable,
-  explainable, free, and cannot fail during a demo. AI icebreakers are fully
-  specced and deferred.
+---
 
 ## Team
 
