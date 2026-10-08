@@ -7,6 +7,9 @@ export default defineConfig({
   server: {
     host: '0.0.0.0',
     port: 5173,
+
+    allowedHosts: ['que-breaking-step-steven.trycloudflare.com'],
+
     // Same-origin only. The frontend must never hardcode localhost:8000 —
     // it breaks the moment someone runs on a different host.
     proxy: {
