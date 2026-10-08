@@ -237,7 +237,9 @@ The test is the demo's centrepiece; a slow centrepiece beats a flaky one.
   ticked Definition-of-done boxes, and every spec — plus `00_conventions.md` and
   all four `deferred_*.md` — now ends with a dated *As built* section. The
   `roadmap.md` deviations table, `AGENTS.md` §1, `PRD.md` and `README.md` were
-  updated in the same pass. Docs now match the code.
+  updated in the same pass. Docs now match the code. **⚠ Superseded in part** —
+  see §12 for a later read-only review that found twenty further defects, and
+  §13 for the tests that expose them.
 
 ---
 
@@ -493,3 +495,153 @@ pages, and concurrent magic-link consumption. Final verification passed with
 and 10 evidence recording tests. `git diff --check` also reported no whitespace
 errors. Tests were run through WSL Docker; use `wsl.exe` from Windows when the
 Docker CLI is not directly available in PowerShell.
+
+---
+
+## 12. Third-party code review — 8 October 2026
+
+A read-only review of every backend and frontend source file. **No product code
+was changed.** Findings are numbered **B1–B20**; §13 maps each to the test that
+exposes it.
+
+Docker was not available to the reviewing machine, so none of this is
+empirically confirmed. It is code-level reasoning plus two checks against
+upstream source (Starlette 0.41.3 `responses.py` and FastAPI 0.115.6
+`routing.py`). The tests in §13 are the confirmation.
+
+### 12.1 One suspected bug retracted
+
+§3 fixed a logout that answered `JSONResponse(None, 204)`, which serialises a
+literal `null` onto a status code defined to have no body. The obvious next
+question is whether the same bug survives anywhere else. It does not.
+
+FastAPI 0.115.6, `get_request_handler`:
+
+```python
+response = actual_response_class(content, **response_args)
+if not is_body_allowed_for_status_code(response.status_code):
+    response.body = b""
+```
+
+So a route that *returns* `None` with `status_code=204` is safe.
+`notifications.mark_all_read`, `admin.delete_skill` and
+`admin.delete_interest` are all correct as written. The logout bug was real only
+because logout **constructed** `JSONResponse(None, 204)` itself and returned a
+`Response` object, which bypasses the line above entirely.
+
+**Do not "fix" those three endpoints.** The inconsistency with the four
+endpoints that do return a bare `Response` is cosmetic only.
+
+### 12.2 Findings
+
+| ID | Finding | Where | Severity |
+|---|---|---|---|
+| B1 | `/matches` cursor pagination **always** returns an empty page 2+. The encoder stores the **positive** score (`encode_cursor(last.score, …)`); the comparator uses `sort_key`, which **negates** it. `sort_key(...) > (after_score, after_id)` can never be true for a non-negative score, so every candidate is filtered out. | `match_service.py:209` | P1 |
+| B2 | `unread_messages` is hardcoded to `0`. `specs/05_connection_requests.md:237` documents a real count. It is in no *As built* section and no deviations table, and no frontend code reads it — so nothing catches it. | `connections.py:138` | P1 |
+| B3 | Rules-of-hooks violation. `useSocketListener`, `useSocket`, `useEffect` and `useLayoutEffect` all sit **below** `if (loading) return <Spinner/>`, so the first render of `ThreadPage` runs fewer hooks than the second. | `MessagingPage.tsx:150,220` | P1 |
+| B4 | The toast dedupe is inverted. Within 5s of the same actor it deletes the **oldest, unrelated** toast (`prev.slice(0, prev.length - 1)`) and discards the **new** notification — the exact opposite of what its comment claims. | `Notifications.tsx:151` | P1 |
+| B5 | Magic-link base URL is hardcoded `f"http://localhost:8000"`; no `APP_URL` setting exists at all. The link redirects to `/` on the **API** port, so the user lands on a 404. `tests-videos/helpers.ts:159` already documents a workaround. | `auth.py:107` | P1 |
+| B6 | No `Origin` check on the WebSocket handshake. `SameSite=Lax` does block CSWSH today, but every source consulted says not to rely on it alone. | `messaging.py:152` | P2 |
+| B7 | Revoking a session does not close live sockets. `load_session` runs once at handshake, so logout and deactivation leave the socket open and still delivering. | `messaging.py:156` | P2 |
+| B8 | No rate limiting on `/auth/login` or `/auth/magic-link`. The latter is an unauthenticated mail-sending endpoint. | `auth.py:68,99` | P2 |
+| B9 | Photo upload does `await file.read()` — the entire body — before the 2 MB cap, with no `Content-Length` pre-check. | `users.py:90` | P2 |
+| B10 | `dev.py` claims traversal protection it does not perform: `_VIDEOS_DIR / filename` plus `.exists()` is not containment, and `\` passes Starlette's `[^/]+`. It also returns `{"error": "not_found"}`, breaking the `specs/00_conventions.md` §2 envelope. | `dev.py:29,31` | P2 |
+| B11 | `update_skill` / `update_interest` / `update_course` never check name uniqueness; only the `create_*` pair does. All three columns are `unique=True`, so renaming onto an existing name is an unhandled `IntegrityError` → **500**. | `admin.py:307,356,428` | P3 |
+| B12 | `match_out` re-derives shared skills **by name**, because `MatchItem` drops the `shared_skill_ids` that `MatchResult` already computed. Combined with B11 this puts the wrong skills on match cards. | `serializers.py:107` | P3 |
+| B13 | `delete_interest` raises `code="skill_in_use"` — copy-pasted from `delete_skill`. `errors.InUseConflict` is defined and never used by either. | `admin.py:449` | P4 |
+| B14 | `create_idea` / `update_idea` never validate that `course_id` exists. It is a foreign key, so a well-formed unknown UUID is an unhandled `IntegrityError` → **500**, not 422. Breaks AGENTS.md §5 rule 5. | `ideas.py:105,135` | P3 |
+| B15 | `has_more = len(items) == limit`. Every other list endpoint uses `len(rows) > limit` before slicing. This reports "there is more" when the page is exactly full and there is none. | `matches.py:54` | P3 |
+| B16 | `ThreadPage` cannot page history: `messages.history()` takes no cursor and there is no "load older". Threads over 50 messages silently truncate, and because `loadHistory` merges by id (§3b) they never arrive. | `client.ts:201` | P2 |
+| B17 | One idea detail request runs a 200-row category sweep purely to find interest counts. | `ideas.py:113` | P4 |
+| B18 | N+1: `list_connections` runs 2 queries per row, `rank_for_viewer` runs 1 per row. §11 de-N+1'd `/threads` but not these. | `connections.py:85`, `match_service.py:215` | P4 |
+| B19 | `WebSocketProvider` wraps the public landing page. A signed-out visitor opens a socket, receives `close(4001)`, and `onclose` retries **indefinitely** at a ≤30s interval, forever. | `App.tsx:155` | P4 |
+| B20 | Dead code: `users.eager` (also a no-op — `setattr(user, attr, getattr(user, attr, None))`), `profiles.load_profiles` (ignores its own name and loads every profile), `pagination.next_cursor_or_none`, `messaging.can_access`, `messaging.messages_after`, `schemas.ResolveReportRequest`, `connections.accepted_request_for` (imported and unused in `matches.py`), `match_service`'s shadowed `decode_cursor` import, `ConnectionRequest` imported twice in `admin.py`, and `from sqlalchemy import select` at the **bottom** of `users.py`. | various | P4 |
+
+### 12.3 Why B1 survived a green suite
+
+Every other list family has a cursor test: admin, ideas, threads, connections,
+plus a malformed-cursor sweep that *includes* `/matches`. That sweep passes
+because a garbage cursor fails to **decode**, raising before the sign bug is
+ever reached. No test ever sends `/matches` a **valid** cursor, and
+`MatchesPage` never sends one either.
+
+The one list family with the bug is the one family nobody paged. That is worth
+more than any individual fix, and it is why §13's pagination contract test is
+generic rather than a one-off.
+
+### 12.4 Decisions needed before fixing
+
+| Question | Default taken here |
+|---|---|
+| B2: implement the real count, or amend `specs/05`? | Implement. The field is already documented at line 237, and AGENTS.md §4 says a wrong spec gets fixed before the code. |
+| B1: add a "Load more" to `MatchesPage`, or fix the cursor only? | Fix the cursor **and** add the control, with a line added to `specs/04` §8 first. Without the control the fix is invisible and people 21+ stay unreachable. |
+| B6: add the Origin check, or just pin current behaviour with a test? | Add the check. It is ten lines and it is what the OWASP guidance says to do. Flagged because it is defence-in-depth, not a live hole. |
+
+---
+
+## 13. The suite that exposes §12
+
+Added with the review, **before any fix**. Every one of these tests is expected
+to **fail** against the code as it stands today; that failure list is the
+evidence the tests work. A test that passes before its fix is not exposing
+anything and must be rewritten.
+
+### 13.1 Three rules that make the suite hard to fake
+
+1. **No network mocking, and it is enforced.** `playwright.config.ts` already
+   states the policy in a comment. `scripts/check-no-mocking.mjs` now fails the
+   build if anything under `frontend/tests/` or `frontend/tests-videos/`
+   reaches for `page.route`, `route.fulfill`, `route.continue` or
+   `context.setOffline`. A comment is not a control.
+2. **Every assertion has an independent witness.** No test asserts only on what
+   the UI displayed. Each also checks one of: a fresh authenticated
+   `page.request` call, a direct Postgres read via `pg`, the real `WebSocket`
+   object's `readyState`, the real Mailpit inbox, or the server's stdout. A
+   hardcoded response produces the right pixels and the wrong database.
+3. **Expected values are derived, never literal.** Nothing asserts
+   `unread_messages == 4`. It asserts equality with the sum of the thread list's
+   own `unread_count` **and** that one more message moves both by exactly one.
+   Nothing asserts a page size of six; it walks `limit=1` to exhaustion and
+   compares the union against the `limit=100` answer.
+
+### 13.2 What was added
+
+| File | Covers |
+|---|---|
+| `backend/tests/integration/test_pagination_contract.py` | B1, B15. A generic walk-to-exhaustion contract over all ten list families, plus a tied-score case that forces the tiebreaker. |
+| `backend/tests/integration/test_handoff_regressions.py` | B2, B9, B10, B11, B12, B13, B14, B17, B18. Conservation laws, database assertions, and a query-count bound. |
+| `backend/tests/integration/test_websocket.py` (extended) | B6, B7. A raw handshake with a forged `Origin`, and revocation closing a live socket. |
+| `frontend/tests/db.ts` (new) | Direct Postgres reads for the Playwright suite. |
+| `frontend/tests/regression.spec.ts` (new) | B2, B3, B4, B5, B16, B19, plus a photo-upload round trip. |
+| `frontend/src/pages/ThreadPage.test.tsx` (new) | B3, B16. |
+| `frontend/src/components/Notifications.test.tsx` (new) | B4. |
+| `scripts/check-no-mocking.mjs` (new) | Rule 1 of §13.1. |
+
+### 13.3 Verification gate
+
+```bash
+docker compose up -d --build
+
+# 1. New tests against UNFIXED code. Record the failure list — this is the
+#    evidence that each test actually exposes its bug.
+docker compose exec -T backend  pytest tests -q
+docker compose exec -T frontend npx vitest run
+docker compose exec -T frontend npx playwright test
+
+# 2. Fix, then all four suites green.
+docker compose exec -T backend  pytest tests -q
+docker compose exec -T frontend npx vitest run
+docker compose exec -T frontend npx playwright test
+docker compose exec -T frontend npx tsc --noEmit
+
+# 3. A green suite is not a quiet server (§3).
+docker compose logs backend | grep -icE "traceback|staledata|unhandled"
+
+# 4. Guards.
+node scripts/check-no-mocking.mjs
+```
+
+### 13.4 Still not done
+
+The §12 findings are **open**. Nothing in this section has been fixed. See
+§12.4 for the three decisions that gate the first three.

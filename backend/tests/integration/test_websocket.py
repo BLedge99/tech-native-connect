@@ -419,6 +419,163 @@ async def test_socket_send_validates_like_http(
         assert len(ack["data"]["body"]) == 2000
 
 
+# ─── Cross-site WebSocket hijacking, and revocation (review findings B6, B7) ──
+
+
+def _plain_database_url() -> str:
+    """The test database as plain postgresql://, for a direct asyncpg connect."""
+    from app.config import get_settings
+
+    return get_settings().test_database_url.replace("postgresql+asyncpg://", "postgresql://")
+
+
+async def _promote_to_admin(user_id: str) -> None:
+    """Make a user an admin, without an admin to do it with.
+
+    There is no bootstrap admin in the live server's database, and granting
+    requires already being an admin — so the row is written directly. That is
+    fine: the point of these tests is the socket lifecycle afterwards, not how
+    admin rights are obtained.
+    """
+    import asyncpg
+
+    conn = await asyncpg.connect(_plain_database_url())
+    try:
+        await conn.execute("UPDATE users SET is_admin = true WHERE id = $1::uuid", user_id)
+    finally:
+        await conn.close()
+
+
+async def _await_close(socket, seconds: float, because: str) -> None:
+    """Assert the server closed the socket within `seconds`.
+
+    A socket that stays open simply blocks in recv(), so a timeout is the
+    failure. Saying so explicitly beats a bare TimeoutError in the log.
+    """
+    import websockets.exceptions
+
+    try:
+        await asyncio.wait_for(socket.recv(), seconds)
+    except asyncio.TimeoutError:
+        pytest.fail(
+            f"the socket was still open {seconds}s after {because} — revocation "
+            "does not reach connections that are already established"
+        )
+    except websockets.exceptions.ConnectionClosed:
+        return
+    pytest.fail(f"expected a close after {because}, the socket sent data instead")
+
+
+async def test_handshake_from_a_foreign_origin_is_refused(live_server, ws_client, truncate_test_tables):
+    """B6. The handshake authenticates from the session cookie but never checks
+    `Origin`.
+
+    The session cookie is `SameSite=Lax`, so a browser does not attach it to a
+    cross-site handshake and the obvious attack does not land today. That is
+    the wrong thing to rely on alone: the guidance is explicit that a later,
+    unrelated change to `SameSite=None` would make it exploitable, and that an
+    `Origin` allowlist is the primary defence rather than a belt-and-braces one.
+
+    A raw client is used because only a real handshake carries a real Origin,
+    and only the server can decide on it — no HTTP handler can be faked here.
+    """
+    truncate_test_tables()
+    _http_base, ws_url = live_server
+    alice, _bob, _tid, _http_a, _http_b = await connect_pair(ws_client)
+
+    # A missing Origin is a non-browser client and must still be allowed, or
+    # nothing but a browser could ever use this endpoint.
+    async with websockets.connect(
+        ws_url, additional_headers={"Cookie": cookie_header(alice["cookies"])}
+    ) as socket:
+        await socket.send(json.dumps({"type": "ping"}))
+        assert (await recvn(socket))["type"] == "pong"
+
+    for hostile in ("https://evil.example", "https://attacker.test", "null"):
+        # Origin travels as a plain header rather than through the client's
+        # own `origin=` argument, so the test does not depend on which of the
+        # two it is. A client that sends no Origin sends none, so there is no
+        # duplicate-header conflict here.
+        with pytest.raises(Exception) as excinfo:
+            async with websockets.connect(
+                ws_url,
+                additional_headers={
+                    "Cookie": cookie_header(alice["cookies"]),
+                    "Origin": hostile,
+                },
+            ):
+                pass
+        # The failure must be the handshake being rejected, not something
+        # unrelated blowing up.
+        assert "403" in str(excinfo.value) or "invalid status" in str(excinfo.value).lower(), (
+            f"origin={hostile!r} was refused, but not by a handshake rejection: "
+            f"{excinfo.value!r}"
+        )
+
+
+async def test_logout_closes_live_sockets(live_server, ws_client, truncate_test_tables):
+    """B7. `load_session` runs once, at the handshake. Revoking the session
+    afterwards leaves the socket connected and still receiving.
+
+    The witness is the socket's own state, plus a 401 from a fresh HTTP call —
+    so this cannot pass by a logout that silently failed.
+    """
+    truncate_test_tables()
+    _http_base, ws_url = live_server
+    alice, bob, tid, http_a, http_b = await connect_pair(ws_client)
+
+    socket_a, _reply = await subscribe(ws_url, alice, tid)
+    async with socket_a:
+        # Proof the socket works before the revocation.
+        http_b.post(
+            f"/api/v1/threads/{tid}/messages", json={"body": "before"}, headers=bob["csrf"]
+        )
+        assert (await recvn(socket_a))["data"]["body"] == "before"
+
+        logged_out = http_a.post("/api/v1/auth/logout", headers=alice["csrf"])
+        assert logged_out.status_code == 204, logged_out.text
+
+        # The HTTP session really is gone.
+        assert http_a.get("/api/v1/users/me").status_code == 401
+
+        await _await_close(socket_a, 8, "logout revoked the session")
+
+
+async def test_deactivating_a_user_closes_their_sockets(
+    live_server, ws_client, truncate_test_tables
+):
+    """B7 for the admin path.
+
+    `deactivate_user` calls `revoke_all_sessions` and its own comment says the
+    deactivation "takes effect immediately". For HTTP it does. For a socket
+    that was already open, it does not: the connection keeps delivering.
+    """
+    truncate_test_tables()
+    _http_base, ws_url = live_server
+    alice, bob, tid, http_a, http_b = await connect_pair(ws_client)
+
+    admin_http = ws_client()
+    admin = await sign_up(admin_http, "Deactivator")
+    await _promote_to_admin(admin["id"])
+
+    socket_a, _reply = await subscribe(ws_url, alice, tid)
+    async with socket_a:
+        http_b.post(
+            f"/api/v1/threads/{tid}/messages", json={"body": "live"}, headers=bob["csrf"]
+        )
+        assert (await recvn(socket_a))["data"]["body"] == "live"
+
+        deactivated = admin_http.post(
+            f"/api/v1/admin/users/{alice['id']}/deactivate", headers=admin["csrf"]
+        )
+        assert deactivated.status_code == 200, deactivated.text
+
+        # Deactivation really did take effect for HTTP.
+        assert http_a.get("/api/v1/users/me").status_code == 401
+
+        await _await_close(socket_a, 8, "the account was deactivated")
+
+
 async def test_two_tabs_for_the_same_user_both_receive(
     live_server, ws_client, truncate_test_tables
 ):
