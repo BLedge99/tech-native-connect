@@ -46,7 +46,9 @@ command that runs all three test suites. Swagger reachable at `/docs`.
 **Finish line:** a fresh clone runs `docker compose up --build` on a clean
 machine and a teammate can register a user end to end with no code changes.
 
-**Status:** Not started.
+**Status:** Done 2 Oct 2026. 19 tables, 4 enums, `citext`, partial and
+composite indexes. `docker compose up --build` brings up db, backend, frontend
+and mailpit. All four suites run.
 
 ---
 
@@ -72,7 +74,7 @@ skills and roles afterwards, and matching is gated until they do.
 - Tests: signup, login, wrong password, logout, magic link, session expiry,
   `current_user` auth guard.
 
-**Status:** Not started.
+**Status:** Done 2 Oct 2026.
 
 ---
 
@@ -97,7 +99,7 @@ allowed to see. Admin override with an audit record.
 - Tests: upload valid, oversize, wrong type, edit own, edit other forbidden,
   email not leaked, completion flag logic, admin override is audited.
 
-**Status:** Not started.
+**Status:** Done 2 Oct 2026.
 
 ---
 
@@ -124,7 +126,7 @@ matches, incomplete-profile prompt, and recent activity.
 - Tests: logged-out redirect, logged-in feed render, incomplete-profile prompt,
   degraded-state render.
 
-**Status:** Not started.
+**Status:** Done 2 Oct 2026.
 
 ---
 
@@ -151,7 +153,7 @@ and interest. Every suggestion carries a plain-English reason. Gated behind
 - Tests: score ordering, each filter individually and combined, completion
   gate, self-exclusion, existing-connection exclusion, reason text.
 
-**Status:** Not started.
+**Status:** Done 2 Oct 2026.
 
 ---
 
@@ -175,7 +177,7 @@ you already answered.
 - Tests: full transition table, invalid transitions, authorisation on every
   action, notification created on accept.
 
-**Status:** Not started.
+**Status:** Done 2 Oct 2026.
 
 ---
 
@@ -199,7 +201,9 @@ counts.
 - Tests: send, receive, persistence, non-participant forbidden, connection
   required, unread counts, reconnect without duplication.
 
-**Status:** Not started.
+**Status:** Done 2 Oct 2026, with one caveat: the two-window E2E test is
+implemented but **flakes about 1 run in 5** (socket subscription timing). See
+[`specs/06_messaging.md`](specs/06_messaging.md) §10.4.
 
 ---
 
@@ -223,7 +227,7 @@ existing WebSocket.
 - Tests: each trigger fires once and not twice, badge arithmetic, mark read,
   recipient scoping.
 
-**Status:** Not started.
+**Status:** Done 2 Oct 2026.
 
 ---
 
@@ -245,7 +249,7 @@ interest, which notifies the poster.
 - Tests: create, edit own, edit other forbidden, delete, list, filters,
   interest triggers exactly one notification, empty state.
 
-**Status:** Not started.
+**Status:** Done 2 Oct 2026.
 
 ---
 
@@ -270,7 +274,30 @@ everywhere.
 - Tests: admin auth on every route, CRUD, deactivation blocks login, promotion,
   audit log written and readable.
 
-**Status:** Not started.
+**Status:** Done 2 Oct 2026.
+
+---
+
+## Status summary — 2 October 2026
+
+All nine required features are implemented, and their Definition-of-done
+checkboxes are ticked in `specs/`. Test totals:
+
+| Suite | Result |
+|---|---|
+| Backend unit + integration | 235 passed |
+| Frontend component | 26 passed |
+| Frontend typecheck | clean |
+| E2E (Playwright) | 11 passed, 1 flake in 5 |
+
+Two things are outstanding, neither of which is a missing feature:
+
+1. **The live-chat E2E flake** above.
+2. **Browser-level test coverage is uneven.** Admin screens, project ideas and
+   the magic-link flow are implemented and API-tested, but have no E2E or
+   component tests. The specs' *As built* sections name each gap.
+
+Nothing on the cut line has been cut. Everything in the Tier 1 table is built.
 
 ---
 
@@ -292,15 +319,16 @@ cannot send a message is not worth showing.
 ## Schedule
 
 Milestones, not per-feature deadlines. Each one is a checkpoint the whole team
-looks at.
+looks at. **The whole board is complete as of 2 October** — see the Status
+summary above.
 
 | Date | Milestone |
 |---|---|
 | Wed 7 Oct | Foundations done. 1 and 2 finished. Feature 3 in progress. |
-| Fri 9 Oct | Features 1–4 finished and demoable end to end. |
-| Mon 12 Oct | Feature 5 finished. First full request→accept→message walkthrough. |
-| Tue 13 Oct | Features 6 and 7 finished. Live chat working between two windows. |
-| Wed 14 Oct | Features 8 and 9 finished. **Nothing new starts.** Tests, fixes, polish. |
+| Fri 9 Oct | Features 1–4 finished and demoable end to end. ✅ |
+| Mon 12 Oct | Feature 5 finished. First full request→accept→message walkthrough. ✅ |
+| Tue 13 Oct | Features 6 and 7 finished. Live chat working between two windows. ✅ |
+| Wed 14 Oct | Features 8 and 9 finished. **Nothing new starts.** Tests, fixes, polish. ✅ |
 | Thu 15 Oct | Demo. |
 
 If a milestone slips by more than a day, cut from the Cut line table. Do not

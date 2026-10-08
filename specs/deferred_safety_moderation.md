@@ -272,3 +272,25 @@ solid. The design is in `specs/deferred_safety_moderation.md`, and the key rule
 is that a block is enforced in the service layer, not just hidden in the UI."
 
 That is a better answer than a half-built report button.
+
+---
+
+## As built — 2 October 2026
+
+**Not built. Nothing in this file exists.** One part of this design turned out
+to be partly covered already, which is worth knowing before implementing the
+rest:
+
+- **`403` on another user's thread already returns `404`, not `403`.** §Part 1
+  says a blocked user must get `404` so a block is not confirmed. That was
+  implemented for threads and connection requests regardless of this spec, for
+  the same reason given in [`00_conventions.md`](00_conventions.md) §2. The
+  block filters have one obvious place to go: the shared query helper in the
+  matching service, which is where `discoverable` from
+  [`deferred_privacy_settings.md`](deferred_privacy_settings.md) would also go.
+- **Deleting a thread row would cascade-delete messages**, which §Part 1
+  correctly warns against. Confirmed against the implemented schema: `messages`
+  has `ON DELETE CASCADE` on `threads`, so this design's advice is not
+  theoretical.
+
+No `blocks` or `reports` table exists.

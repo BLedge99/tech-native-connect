@@ -1,35 +1,79 @@
 services:
+  # ─── Database ────────────────────────────────────────────────────────────
+  # Postgres from day one. See decisions/0002-postgres-not-sqlite.md —
+  # citext, bytea, gen_random_uuid(), partial indexes, timestamptz and
+  # concurrent writes all depend on it.
   db:
     image: postgres:16-alpine
     environment:
-      POSTGRES_USER: cohort
-      POSTGRES_PASSWORD: cohort
-      POSTGRES_DB: cohort
+      POSTGRES_USER: ${POSTGRES_USER:-bootcamp}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-bootcamp}
+      POSTGRES_DB: ${POSTGRES_DB:-bootcamp_connect}
     ports:
       - "5432:5432"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U cohort -d cohort"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-bootcamp} -d ${POSTGRES_DB:-bootcamp_connect}"]
       interval: 5s
       timeout: 5s
       retries: 10
 
+  # ─── Dev mail ────────────────────────────────────────────────────────────
+  # Fake SMTP. No real email is ever sent. See decisions/0007-mailpit-dev-mail.md
+  mailpit:
+    image: axllent/mailpit:latest
+    ports:
+      - "1025:1025"   # SMTP
+      - "8025:8025"   # Web inbox
+    environment:
+      MP_MAX_MESSAGES: 500
+      MP_SMTP_AUTH_ACCEPT_ANY: 1
+      MP_SMTP_AUTH_ALLOW_INSECURE: 1
+
+  # ─── Backend ─────────────────────────────────────────────────────────────
   backend:
     build: ./backend
+    # --reload-dir is required: without it the watcher does not pick up changes
+    # in app/ and you restart the container to see your own edits.
+    command:
+      - sh
+      - -c
+      - |
+        alembic upgrade head &&
+        python -m app.seed &&
+        exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir app
+    # ⚠️  SINGLE WORKER IS A CORRECTNESS REQUIREMENT, NOT A PREFERENCE.
+    # The WebSocket connection registry in app/realtime.py is per-process.
+    # Run two workers and each holds half the sockets; messages to the other
+    # half are silently lost. Before changing this, read
+    # decisions/0005-websocket-in-process.md.
     environment:
-      DATABASE_URL: postgresql+asyncpg://cohort:cohort@db:5432/cohort
-      FRONTEND_ORIGIN: http://localhost:5173
-      ENVIRONMENT: development
-      PYTHONPATH: /app
+      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://bootcamp:bootcamp@db:5432/bootcamp_connect}
+      SESSION_SECRET: ${SESSION_SECRET:-dev-only-change-me}
+      APP_ENV: ${APP_ENV:-development}
+      MAILPIT_SMTP_HOST: ${MAILPIT_SMTP_HOST:-mailpit}
+      MAILPIT_SMTP_PORT: ${MAILPIT_SMTP_PORT:-1025}
+      MAILPIT_WEB_URL: ${MAILPIT_WEB_URL:-http://localhost:8025}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173}
+      SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:-bootcamp-dev-admin}
+      # Integration tests. Separate database from dev so a test run cannot
+      # truncate the demo data. Set here so `docker compose exec backend pytest`
+      # needs no extra flags.
+      TEST_DATABASE_URL: ${TEST_DATABASE_URL:-postgresql+asyncpg://bootcamp:bootcamp@db:5432/bootcamp_connect_test}
     ports:
       - "8000:8000"
     volumes:
       - ./backend:/app
+      - ./videos:/app/videos
+      - venv:/app/.venv
     depends_on:
       db:
         condition: service_healthy
+      mailpit:
+        condition: service_started
 
+  # ─── Frontend ────────────────────────────────────────────────────────────
   frontend:
     build: ./frontend
     command: npm run dev -- --host 0.0.0.0 --port 5173
@@ -37,16 +81,37 @@ services:
       - "5173:5173"
     volumes:
       - ./frontend:/app
-      - frontend_node_modules:/app/node_modules
+      - /app/node_modules
     depends_on:
       - backend
 
-  mailpit:
-    image: axllent/mailpit:latest
+  # ─── Dev DB GUI ──────────────────────────────────────────────────────────
+  # Adminer — lightweight single-file Postgres GUI for development.
+  # ─── Dev DB GUI ──────────────────────────────────────────────────────────
+  # Adminer — lightweight single-file Postgres GUI for development.
+  #
+  # index.php is replaced wholesale (a copy of the stock one plus autologin).
+  # It MUST keep its own adminer_object() declaration — putting that function in
+  # a separate file too is a fatal "Cannot redeclare function" error.
+  # ADMINER_DEFAULT_DB is bootcamp_connect with an UNDERSCORE; the hyphenated
+  # "bootcamp-connect" spelling does not exist and login fails.
+  adminer:
+    image: adminer:latest
     ports:
-      - "1025:1025"
-      - "8025:8025"
+      - "8080:8080"
+    volumes:
+      - ./adminer/index.php:/var/www/html/index.php:ro
+      - ./adminer/plugins-enabled:/var/www/html/plugins-enabled:ro
+    environment:
+      ADMINER_DEFAULT_DRIVER: pgsql
+      ADMINER_DEFAULT_SERVER: db
+      ADMINER_DEFAULT_USERNAME: ${POSTGRES_USER:-bootcamp}
+      ADMINER_DEFAULT_PASSWORD: ${POSTGRES_PASSWORD:-bootcamp}
+      ADMINER_DEFAULT_DB: ${POSTGRES_DB:-bootcamp_connect}
+    depends_on:
+      db:
+        condition: service_healthy
 
 volumes:
-  postgres_data:
-  frontend_node_modules:
+  pgdata:
+  venv:

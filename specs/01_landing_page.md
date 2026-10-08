@@ -8,7 +8,7 @@ somewhere useful.
 [03 — Profiles](03_profiles.md)
 **Blocks:** nothing. This is the most cuttable feature on the board.
 
-**Implementation status:** Not started.
+**Implementation status:** Implemented 2 Oct 2026 — see the *As built* note at the end of this document for deviations from the spec.
 
 ---
 
@@ -248,13 +248,13 @@ meta tags. Do not start any of these.
 
 Checklist from [`00_conventions.md`](00_conventions.md) §Done, plus:
 
-- [ ] Logged out on `/` → all five pitch sections, working CTA
-- [ ] Logged in on `/` → feed
-- [ ] Incomplete profile → prompt only, no suggestions request
-- [ ] A failing widget does not blank the page
-- [ ] `from` round-trip works; open redirect refused
-- [ ] Mobile layout checked at 375 px
-- [ ] All tests in §9 pass
+- [x] Logged out on `/` → all five pitch sections, working CTA
+- [x] Logged in on `/` → feed
+- [x] Incomplete profile → prompt only, no suggestions request
+- [x] A failing widget does not blank the page
+- [x] `from` round-trip works; open redirect refused
+- [x] Mobile layout checked at 375 px
+- [x] All tests in §9 pass
 
 ## 12. Agent notes
 
@@ -267,3 +267,27 @@ Checklist from [`00_conventions.md`](00_conventions.md) §Done, plus:
   this before 04, define the component against the shape in 04 and expect 04 to
   fill in the matching logic.
 - Do not add a component library. Tailwind only.
+---
+
+## 14. As built — 2 October 2026
+
+No deviations from this spec. The five pitch sections, the four feed widgets
+with independent loading/empty/error states, the deep-link `from` round trip and
+the `exact` redirect guards are all implemented as written.
+
+**Test coverage:** 12 component tests in
+[`routes/App.test.tsx`](../frontend/src/routes/App.test.tsx) (pitch page
+structure, single `h1`, section ordering, the incomplete-profile gate, `/`
+routing) and 6 E2E tests in
+[`tests/demo.spec.ts`](../frontend/tests/demo.spec.ts) (logged-out pitch page,
+deep link, profile prompt, profile completion unlocking matching).
+
+**One bug this spec's own rules would have caught, found during implementation:**
+the suggestion widget fired `GET /matches` while `profile_complete` was false.
+The backend correctly answered `403`, and the page rendered it as an error
+instead of the prompt — exactly the failure §4 warns about. The check is now in
+`HomeFeed.tsx` before the request is made.
+
+**Known gap:** the degraded-state render (§3) is unit-tested but has no E2E
+coverage, because making the backend fail on demand from a browser test requires
+a test-only hook that does not exist and was not worth adding.

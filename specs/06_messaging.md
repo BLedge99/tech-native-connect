@@ -6,7 +6,7 @@ is the payoff of the whole loop and the part most likely to break live.
 **Depends on:** [05 — Connection requests](05_connection_requests.md)
 **Blocks:** [07 — Notifications](07_notifications.md)
 
-**Implementation status:** Not started.
+**Implementation status:** Implemented 2 Oct 2026 — see the *As built* note at the end of this document for deviations from the spec.
 
 ---
 
@@ -394,19 +394,19 @@ message drafts, message expiry, WebSocket scale beyond one backend process.
 
 ## 8. Definition of done
 
-- [ ] `require_participant` on every thread route **and** on socket subscribe
-- [ ] `403 connection_not_established` enforced, not assumed
-- [ ] Non-participants get `404` — existence not confirmed
-- [ ] Messages persist across a backend restart
-- [ ] Message pagination index includes `id` as tiebreaker
-- [ ] Opening a thread clears unread, including messages that arrived while closed
-- [ ] Sender does not receive its own broadcast
-- [ ] Optimistic send reconciles by `id` and rolls back on failure
-- [ ] Send works over `POST` with the socket down
-- [ ] Reconnect refetches without duplicates
-- [ ] Uvicorn single-worker requirement documented in the compose file
-- [ ] The two-window E2E test passes
-- [ ] Every §6 test passes
+- [x] `require_participant` on every thread route **and** on socket subscribe
+- [x] `403 connection_not_established` enforced, not assumed
+- [x] Non-participants get `404` — existence not confirmed
+- [x] Messages persist across a backend restart
+- [x] Message pagination index includes `id` as tiebreaker
+- [x] Opening a thread clears unread, including messages that arrived while closed
+- [x] Sender does not receive its own broadcast
+- [x] Optimistic send reconciles by `id` and rolls back on failure
+- [x] Send works over `POST` with the socket down
+- [x] Reconnect refetches without duplicates
+- [x] Uvicorn single-worker requirement documented in the compose file
+- [ ] The two-window E2E test passes — **implemented, ~1 flake in 5 runs** (socket subscription timing). See *As built* §10.4.
+- [x] Every §6 test passes
 
 ## 9. Agent notes
 
@@ -423,3 +423,73 @@ message drafts, message expiry, WebSocket scale beyond one backend process.
   scrolled up.
 - **Send via `POST`, not the socket.** The socket is for receiving live.
 - **Single worker.** Put it in the compose file.
+---
+
+## 10. As built — 2 October 2026
+
+The permission rules, the read-cursor semantics, the socket protocol and the
+lazy thread creation are all implemented as specified.
+
+### 10.1 One WebSocket per page, not per component
+
+§4's protocol is implemented as written. **How it is consumed is not.** The
+first implementation gave each component its own socket via a `useWebSocket()`
+hook — the notification bell, the toast stack and the chat view each opened
+one. Three sockets per page, three handshakes, three reconnect loops, and **the
+chat's socket could lose the connection race and never subscribe**.
+
+The symptom was the worst kind: **live messages silently never arrived**. The
+UI looked correct, history worked, the send worked — only the thing the demo is
+built around was missing.
+
+[`hooks/websocket.tsx`](../frontend/src/hooks/websocket.tsx) now provides a
+single provider-owned socket per page. Components register listeners:
+
+```ts
+useThreadSubscription(threadId)          // subscribe for as long as mounted
+useSocketListener('message', handler)    // 'message' and 'ack' frames
+useSocketListener('notification', handler)
+```
+
+The provider re-sends every wanted subscription on reconnect, so §4's "refetch
+after reconnect" rule still holds, and it no longer depends on each component
+re-subscribing itself.
+
+### 10.2 Socket hardening
+
+Two unhandled paths could kill a connection mid-demo and were closed:
+
+- **A malformed frame** (invalid JSON) raised out of `receive_json()` and
+  dropped the socket. It now replies with an error frame and continues.
+- **Any unexpected exception** in the loop became an ASGI error. It is now
+  logged and the `finally` still unsubscribes.
+
+Both are tested: `test_malformed_frame_does_not_kill_the_socket`.
+
+### 10.3 `peerTyping` was removed
+
+§5's chat view sketched a typing indicator. It was dead state with nothing
+driving it, and typing indicators are out of scope in §7. Removed rather than
+left as a stub.
+
+### 10.4 Known flake
+
+The two-window E2E test is implemented and **passes about 4 runs in 5**. It fails
+inside `openConversation`, waiting for the message composer to appear.
+
+The most likely cause is subscription timing: `useThreadSubscription` only
+subscribes once `status === 'open'`, and the test proceeds as soon as the
+composer renders, which can precede the subscribe frame. The next step is to
+wait for the `subscribed` acknowledgement the server already sends
+(`{"type":"subscribed","thread_id":…}`) before sending. **Do not paper over it
+with a blanket retry** — a flaky centrepiece test is worse than a slow one.
+
+### 10.5 Test coverage
+
+13 integration tests in
+[`test_websocket.py`](../backend/tests/integration/test_websocket.py), run
+against a **real uvicorn subprocess** because `httpx`'s `ASGITransport` cannot
+speak WebSocket. All six §6 cases plus socket-send, unsubscribe, notification
+push, ping/pong, malformed frames and two tabs for one user. Plus 11 backend
+integration tests for the HTTP side of the permission rules and read cursors,
+and one E2E test for the full two-window path.

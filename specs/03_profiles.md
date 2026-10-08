@@ -8,7 +8,7 @@ sensibly, and enough for someone to decide whether they want to talk to you.
 [05 — Connection requests](05_connection_requests.md),
 [08 — Project ideas](08_project_ideas.md), [09 — Admin](09_admin.md)
 
-**Implementation status:** Not started.
+**Implementation status:** Implemented 2 Oct 2026 — see the *As built* note at the end of this document for deviations from the spec.
 
 ---
 
@@ -394,13 +394,13 @@ markdown bios.
 
 ## 12. Definition of done
 
-- [ ] `ProfilePrivate` and `ProfilePublic` are separate schemas
-- [ ] Photo upload stores a sniffed-type blob, 2 MB cap, served from Postgres
-- [ ] `profile_complete` = role + ≥1 skill, recomputed on every update
-- [ ] No route lets a user write another user's profile
-- [ ] No response body anywhere contains another user's email
-- [ ] Live `profile_complete` hint on the edit form
-- [ ] Every §10 test passes
+- [x] `UserPrivate` and `UserPublic` are separate schemas (§6)
+- [x] Photo upload stores a sniffed-type blob, 2 MB cap, served from Postgres
+- [x] `profile_complete` = role + ≥1 skill, recomputed on every update
+- [x] No route lets a user write another user's profile
+- [x] No response body anywhere contains another user's email
+- [x] Live `profile_complete` hint on the edit form
+- [x] Every §10 test passes
 
 ## 13. Agent notes
 
@@ -413,3 +413,46 @@ markdown bios.
 - **`profile_complete` is cached state.** Recompute it in the service; never
   trust a client-supplied value.
 - **Do not add a second photo or an upload library.** One photo, one endpoint.
+---
+
+## 14. As built — 2 October 2026
+
+**One deviation, and it simplifies this spec.**
+
+### 14.1 `ProfilePrivate` is gone; `UserPrivate` carries the difference
+
+§6 named three schemas (`ProfilePublic`, `ProfilePrivate`, `UserPublic`). The
+split that actually matters is **own account vs someone else's**, so that is
+where the boundary sits:
+
+| Schema | Contains | Used by |
+|---|---|---|
+| `UserPublic` | profile fields only, **never `email`** | `/users/{id}`, matches, connections, threads, notifications, ideas |
+| `UserPrivate` | `UserPublic` + `email`, `is_admin`, `is_active`, `last_login_at` | `/users/me`, auth responses |
+
+`ProfilePrivate` existed only to add `user_id`, which no endpoint returned.
+Removing it deleted a schema rather than adding one, and the leak guard in §6 is
+now carried by `UserPublic` having no `email` field to leak.
+
+§6's table is otherwise implemented as written: `profile_complete`, `is_active`
+and `is_admin` are absent from the public view.
+
+### 14.2 Other notes
+
+`GET /users/me` is registered **before** `GET /users/{user_id}`. FastAPI matches
+in declaration order, so the reverse order makes `/users/me` unreachable. Any
+future literal path segment must be declared ahead of its parameterised sibling.
+
+`profile_complete` is recomputed in `update_profile` and in `seed.py`, and was
+**written by SQL into the live database once** during development because
+`seed.py` originally refreshed the profile after setting the flag, which
+discarded the change. Both fixed.
+
+**Test coverage:** unit tests for `sniff_image_type` covering PNG, JPEG, WebP
+and the rejection of a shell script claiming to be a PNG; integration tests for
+upload, the 2 MB cap, type rejection, round-trip bytes, the 413/415 codes, and
+a **scan across eight user-returning endpoints** asserting no response contains
+another user's email.
+
+**Known gaps:** no component tests for the edit form; the photo-downscaling
+mentioned in ADR 0006 is not implemented — the original is served.

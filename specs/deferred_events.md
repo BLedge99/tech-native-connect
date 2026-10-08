@@ -179,3 +179,23 @@ Create an event → RSVP → organiser sees a notification → cancel → attend
   second approach.
 - **This feature will not require changes to specs 01–09.** That is the test of
   whether the layering is right — if it does, something was built too tightly.
+
+---
+
+## As built — 2 October 2026
+
+**Not built. Nothing in this file exists.** Recorded here because the design
+was checked against the implemented code and two of its assumptions turned out
+to be wrong:
+
+1. **§Data model proposes `event_rsvps` with a composite PK.** That is the
+   pattern the implemented `idea_interests` table uses, and it is correct — but
+   note it depends on the migration, not on `create_all`. Both tables are
+   created by `alembic/versions/0001_initial.py`, not by SQLAlchemy metadata.
+2. **§Rules proposes `SELECT ... FOR UPDATE` for the capacity race.** That is
+   sound, but the implemented `send_message` shows the pattern this codebase
+   actually uses for correctness under concurrency: a database constraint
+   (`ON CONFLICT DO NOTHING`) rather than a check in application code.
+
+The rest of the design — free-text `location`, soft cancel, batched
+cancellation notifications — is unchanged and still applies.

@@ -12,9 +12,20 @@ developers who are studying alongside them on the same bootcamp.
 - **Repo:** https://github.com/BLedge99/tech-native-connect
 - **Demo deadline:** 15 October 2026
 - **Team:** Ben, Joey, James, Alys, Mick
-- **Current phase:** specification complete, implementation not started
+- **Current phase:** all nine required features implemented, 2 October 2026
 
-This repo currently contains documentation only. Code has not been written yet.
+**State.** 235 backend tests, 26 frontend component tests, 11 E2E tests pass.
+`tsc --noEmit` is clean. Every feature spec carries an *As built* section
+documenting its deviations; `roadmap.md` §Status summary has the totals and the
+two known gaps.
+
+- **The code in this repo is newer than the specs in one direction only.** The
+  specs remain the source of truth for *what* the product is. Where the build
+  had to differ, the difference is written into the spec rather than left in the
+  code — if you find a sixth deviation, fix it the same way.
+- **Do not build anything in `deferred_*.md`.** Still out of scope.
+- **[`handoff.md`](handoff.md)** records the live state of the build, known bugs
+  and gotchas. Read it before touching anything.
 
 ---
 
@@ -43,6 +54,7 @@ change the stack.
 ```
 .
 ├── AGENTS.md              ← you are here
+├── handoff.md             ← live build state, known bugs, gotchas
 ├── PRD.md                 ← what the product is, who it serves, scope
 ├── roadmap.md             ← numbered features in build order, with finish lines
 ├── README.md              ← human quickstart
@@ -62,7 +74,7 @@ change the stack.
     ├── 0001-*.md ... 0012-*.md
 ```
 
-### Target code layout (to be created)
+### Code layout
 
 ```
 backend/
@@ -78,16 +90,22 @@ backend/
     realtime.py       websocket connection registry
     seed.py           dev seed data incl. admins
   tests/
-    unit/  integration/  e2e/
+    unit/          pure logic, no I/O
+    integration/   real Postgres, including a live-server WebSocket suite
 frontend/
   src/
     api/              typed fetch client
     components/
     pages/
     routes/
-    hooks/
-  e2e/               Playwright
+    hooks/            session, useQuery, websocket (one socket per page)
+  tests/              Playwright E2E + global setup (resets demo data first)
+  tests-videos/       Playwright recordings: one per feature, two-window pairs
+  playwright.videos.config.ts   recording config (video on, 1280x800)
 docker-compose.yml
+scripts/
+  build-videos.sh     composites the two-window pairs, converts to mp4
+videos/              generated evidence videos — see handoff.md §6
 ```
 
 ---
@@ -101,7 +119,9 @@ docker-compose.yml
 3. Implement **backend → frontend → tests**, all on one branch.
 4. Branch name: `feat/<spec-number>-<short-slug>` e.g. `feat/03-profiles`.
 5. Open a PR referencing the spec number: `Closes spec 03`.
-6. Update the spec's "Implementation status" line when the finish line is met.
+6. Update the spec's "Implementation status" line and its Definition-of-done
+   checkboxes when the finish line is met. Add an *As built* section if the
+   implementation had to differ from the spec — do not leave that only in code.
 
 ### Do not
 
