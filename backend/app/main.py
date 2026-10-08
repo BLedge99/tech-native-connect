@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .db import get_db
 from .config import settings
 from .models import *
-ph=PasswordHasher(); app=FastAPI(title='Cohort Connect',docs_url='/api/v1/docs')
+ph=PasswordHasher(); app=FastAPI(title='Bootcamp Connect',docs_url='/api/v1/docs')
 app.add_middleware(CORSMiddleware,allow_origins=[settings.frontend_origin],allow_credentials=True,allow_methods=['*'],allow_headers=['*'])
 class APIError(Exception):
  def __init__(self,status,code,message,fields=None): self.status=status; self.code=code; self.message=message; self.fields=fields
