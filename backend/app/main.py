@@ -150,7 +150,11 @@ async def conn_create(b:ConnCreate,u:User=Depends(current_user),db:AsyncSession=
  c=ConnectionRequest(sender_id=u.id,receiver_id=r.id,message=b.message); db.add(c); await db.flush(); db.add(Notification(user_id=r.id,type='connection_requested',actor_id=u.id,connection_request_id=c.id,data={'actor_name':u.display_name,'url':'/connections'})); await db.commit(); return {'id':str(c.id),'status':c.status.value,'sender':user_summary(u),'receiver':user_summary(r),'message':c.message,'created_at':c.created_at.isoformat()}
 @app.get('/api/v1/connections')
 async def connections(filter:Optional[str]=None,u:User=Depends(current_user),db:AsyncSession=Depends(get_db)):
- q=select(ConnectionRequest).where(or_(ConnectionRequest.sender_id==u.id,ConnectionRequest.receiver_id==u.id)).order_by(ConnectionRequest.created_at.desc()); xs=(await db.execute(q)).scalars().all(); return [{'id':str(x.id),'sender_id':str(x.sender_id),'receiver_id':str(x.receiver_id),'status':x.status.value,'message':x.message,'created_at':x.created_at.isoformat()} for x in xs if not filter or (filter=='received' and x.receiver_id==u.id and x.status==ConnStatus.pending) or (filter=='sent' and x.sender_id==u.id and x.status==ConnStatus.pending) or (filter=='connected' and x.status==ConnStatus.accepted)]
+ q=select(ConnectionRequest).where(or_(ConnectionRequest.sender_id==u.id,ConnectionRequest.receiver_id==u.id)).order_by(ConnectionRequest.created_at.desc()); xs=(await db.execute(q)).scalars().all(); out=[]
+ for x in xs:
+  if filter and not ((filter=='received' and x.receiver_id==u.id and x.status==ConnStatus.pending) or (filter=='sent' and x.sender_id==u.id and x.status==ConnStatus.pending) or (filter=='connected' and x.status==ConnStatus.accepted)):continue
+  sender=await load_user(db,x.sender_id); receiver=await load_user(db,x.receiver_id); out.append({'id':str(x.id),'sender_id':str(x.sender_id),'receiver_id':str(x.receiver_id),'sender':user_summary(sender),'receiver':user_summary(receiver),'status':x.status.value,'message':x.message,'created_at':x.created_at.isoformat()})
+ return out
 class Transition(BaseModel): action:str
 @app.patch('/api/v1/connections/{cid}')
 async def conn_transition(cid:uuid.UUID,b:Transition,u:User=Depends(current_user),db:AsyncSession=Depends(get_db)):
@@ -175,17 +179,23 @@ async def thread_for(db,tid,uid):
  return t,c
 @app.get('/api/v1/threads')
 async def threads(u:User=Depends(current_user),db:AsyncSession=Depends(get_db)):
- xs=(await db.execute(select(Thread,ConnectionRequest).join(ConnectionRequest,Thread.connection_request_id==ConnectionRequest.id).where(ConnectionRequest.status==ConnStatus.accepted,or_(ConnectionRequest.sender_id==u.id,ConnectionRequest.receiver_id==u.id)))).all(); return [{'id':str(t.id),'connection_request_id':str(c.id),'other_user_id':str(c.receiver_id if c.sender_id==u.id else c.sender_id)} for t,c in xs]
+ xs=(await db.execute(select(Thread,ConnectionRequest).join(ConnectionRequest,Thread.connection_request_id==ConnectionRequest.id).where(ConnectionRequest.status==ConnStatus.accepted,or_(ConnectionRequest.sender_id==u.id,ConnectionRequest.receiver_id==u.id)))).all(); out=[]
+ for t,c in xs:
+  other_id=c.receiver_id if c.sender_id==u.id else c.sender_id; other=await load_user(db,other_id); latest=(await db.execute(select(Message).where(Message.thread_id==t.id).order_by(Message.created_at.desc(),Message.id.desc()).limit(1))).scalar_one_or_none(); receipt=await db.get(ReadReceipt,(t.id,u.id)); unread_q=select(func.count()).select_from(Message).where(Message.thread_id==t.id,Message.sender_id!=u.id)
+  if receipt:unread_q=unread_q.where(Message.created_at>receipt.last_read_at)
+  unread_count=await db.scalar(unread_q)
+  out.append({'id':str(t.id),'connection_request_id':str(c.id),'other_user_id':str(other_id),'other_user':user_summary(other),'last_message':{'body':latest.body,'sender_id':str(latest.sender_id),'created_at':latest.created_at.isoformat()} if latest else None,'unread_count':unread_count})
+ return out
 @app.get('/api/v1/threads/{tid}/messages')
 async def messages(tid:uuid.UUID,u:User=Depends(current_user),db:AsyncSession=Depends(get_db)):
- await thread_for(db,tid,u.id); xs=(await db.execute(select(Message).where(Message.thread_id==tid).order_by(Message.created_at,Message.id).limit(50))).scalars().all(); rr=await db.get(ReadReceipt,(tid,u.id));
+ _,connection=await thread_for(db,tid,u.id); xs=(await db.execute(select(Message).where(Message.thread_id==tid).order_by(Message.created_at,Message.id).limit(50))).scalars().all(); rr=await db.get(ReadReceipt,(tid,u.id));
  if not rr:db.add(ReadReceipt(thread_id=tid,user_id=u.id,last_read_at=datetime.now(timezone.utc)))
  else:rr.last_read_at=datetime.now(timezone.utc)
- await db.commit(); return {'items':[{'id':str(x.id),'sender_id':str(x.sender_id),'body':x.body,'created_at':x.created_at.isoformat()} for x in xs],'next_cursor':None}
+ await db.commit(); sender_ids={x.sender_id for x in xs}; sender_ids.update((connection.sender_id,connection.receiver_id)); users={str(uid):await load_user(db,uid) for uid in sender_ids}; other_id=connection.receiver_id if connection.sender_id==u.id else connection.sender_id; return {'participant':user_summary(users[str(other_id)]),'items':[{'id':str(x.id),'sender_id':str(x.sender_id),'sender_name':users[str(x.sender_id)].display_name,'body':x.body,'created_at':x.created_at.isoformat()} for x in xs],'next_cursor':None}
 class Msg(BaseModel): body:str=Field(min_length=1,max_length=2000)
 @app.post('/api/v1/threads/{tid}/messages',status_code=201)
 async def send_message(tid:uuid.UUID,b:Msg,u:User=Depends(current_user),db:AsyncSession=Depends(get_db)):
- _,c=await thread_for(db,tid,u.id); m=Message(thread_id=tid,sender_id=u.id,body=b.body.strip()); db.add(m); other=c.receiver_id if c.sender_id==u.id else c.sender_id; db.add(Notification(user_id=other,type='new_message',actor_id=u.id,thread_id=tid,data={'actor_name':u.display_name,'url':f'/messages/{tid}'})); await db.commit(); return {'id':str(m.id),'sender_id':str(u.id),'body':m.body,'created_at':m.created_at.isoformat()}
+ _,c=await thread_for(db,tid,u.id); m=Message(thread_id=tid,sender_id=u.id,body=b.body.strip()); db.add(m); other=c.receiver_id if c.sender_id==u.id else c.sender_id; db.add(Notification(user_id=other,type='new_message',actor_id=u.id,thread_id=tid,data={'actor_name':u.display_name,'url':f'/messages/{tid}'})); await db.commit(); return {'id':str(m.id),'sender_id':str(u.id),'sender_name':u.display_name,'body':m.body,'created_at':m.created_at.isoformat()}
 class IdeaCreate(BaseModel): title:str=Field(min_length=1,max_length=120); description:str=Field(min_length=50,max_length=2000); category:IdeaCategory; skills_needed:list[str]=Field(default_factory=list,max_length=20); course_id:Optional[uuid.UUID]=None
 @app.get('/api/v1/ideas')
 async def ideas(u:User=Depends(current_user),db:AsyncSession=Depends(get_db),open_only:bool=True,search:Optional[str]=None):
