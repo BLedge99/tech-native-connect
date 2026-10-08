@@ -11,8 +11,11 @@ Full-stack cohort networking demo built from specs 00–09 supplied with the pro
 
 ## Run
 ```bash
-docker compose up --build
+docker compose up -d --build
 ```
+
+On Windows PowerShell, use `\.\run.bat` to start the stack in the background.
+Stop it with `docker compose down`.
 Open http://localhost:5173
 
 Seed users:
