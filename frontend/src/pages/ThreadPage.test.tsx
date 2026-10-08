@@ -163,7 +163,7 @@ test('opening a conversation logs no react hook-order error', async () => {
     // Loading flips to false after the first fetch resolves, which is when the
     // component renders past its early return and reaches the hooks that were
     // skipped the first time.
-    await waitFor(() => expect(screen.getByLabel('Message')).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByLabelText('Message')).toBeInTheDocument())
 
     const hookProblems = problems.filter((text) =>
       /rendered (more|fewer) hooks|change the order of hooks|hook order/i.test(text),
@@ -181,7 +181,7 @@ test('the socket listener still receives frames once loading finishes', async ()
   // The functional consequence of the same defect: the listener registered
   // below the early return has to work once the component gets past the spinner.
   renderThread()
-  await waitFor(() => expect(screen.getByLabel('Message')).toBeInTheDocument())
+  await waitFor(() => expect(screen.getByLabelText('Message')).toBeInTheDocument())
 
   expect(socket.listeners.length, 'no socket listener was registered').toBeGreaterThan(0)
 
@@ -199,7 +199,7 @@ test('the socket listener still receives frames once loading finishes', async ()
 
 test('a frame for a different thread is ignored', async () => {
   renderThread()
-  await waitFor(() => expect(screen.getByLabel('Message')).toBeInTheDocument())
+  await waitFor(() => expect(screen.getByLabelText('Message')).toBeInTheDocument())
 
   await act(async () => {
     socket.listeners.forEach((listener) =>
@@ -217,7 +217,7 @@ test('a frame for a different thread is ignored', async () => {
 
 test('history and live frames merge without duplicating a message', async () => {
   renderThread()
-  await waitFor(() => expect(screen.getByLabel('Message')).toBeInTheDocument())
+  await waitFor(() => expect(screen.getByLabelText('Message')).toBeInTheDocument())
 
   await expect(screen.getByText('first')).toBeInTheDocument()
 
@@ -250,9 +250,9 @@ test('a message is rolled back and the draft restored when sending fails', async
   )
 
   renderThread()
-  await waitFor(() => expect(screen.getByLabel('Message')).toBeInTheDocument())
+  await waitFor(() => expect(screen.getByLabelText('Message')).toBeInTheDocument())
 
-  const composer = screen.getByLabel('Message')
+  const composer = screen.getByLabelText('Message')
   await userEvent.type(composer, 'this will not send')
   await userEvent.click(screen.getByRole('button', { name: 'Send' }))
 
@@ -264,14 +264,14 @@ test('a message is rolled back and the draft restored when sending fails', async
 
 test('a whitespace-only draft cannot be sent', async () => {
   renderThread()
-  await waitFor(() => expect(screen.getByLabel('Message')).toBeInTheDocument())
+  await waitFor(() => expect(screen.getByLabelText('Message')).toBeInTheDocument())
 
   const send = screen.getByRole('button', { name: 'Send' })
   expect(send).toBeDisabled()
 
-  await userEvent.type(screen.getByLabel('Message'), '    ')
+  await userEvent.type(screen.getByLabelText('Message'), '    ')
   expect(send).toBeDisabled()
 
-  await userEvent.type(screen.getByLabel('Message'), 'x')
+  await userEvent.type(screen.getByLabelText('Message'), 'x')
   expect(send).toBeEnabled()
 })
