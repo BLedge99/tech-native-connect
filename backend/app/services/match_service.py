@@ -113,6 +113,10 @@ async def fetch_candidates(
         .where(
             User.id != viewer_id,
             User.is_active.is_(True),
+            # A person must finish their own profile before they can appear as
+            # a match. Otherwise the UI offers Connect and the connection
+            # service must reject the request as receiver_profile_incomplete.
+            Profile.profile_complete.is_(True),
         )
     )
 

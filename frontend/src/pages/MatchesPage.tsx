@@ -12,6 +12,7 @@ import { useQuery } from '../hooks/useQuery'
 export function MatchesPage() {
   const [params, setParams] = useSearchParams()
   const [reloadKey, bumpReload] = useState(0)
+  const [connectError, setConnectError] = useState<string | null>(null)
   const role = params.get('role') ?? ''
   const skill = params.get('skill') ?? ''
   const course = params.get('course_id') ?? ''
@@ -104,6 +105,7 @@ export function MatchesPage() {
 
       {query.loading && <Spinner label="Ranking people" />}
       {query.error && <ErrorState message={query.error.message} onRetry={query.refetch} />}
+      {connectError && <ErrorState message={connectError} onRetry={() => setConnectError(null)} />}
       {!query.loading && !query.error && items.length === 0 && (
         <p className="rounded-lg border border-dashed border-slate-300 p-8 text-center text-sm text-slate-500">
           No one matches these filters. Try widening them.
@@ -116,8 +118,13 @@ export function MatchesPage() {
             key={match.user.id}
             match={match}
             onConnect={async (id) => {
-              await connApi.send(id)
-              bumpReload((n) => n + 1)
+              try {
+                setConnectError(null)
+                await connApi.send(id)
+                bumpReload((n) => n + 1)
+              } catch (err) {
+                setConnectError(err instanceof ApiError ? err.message : 'Could not send the connection request.')
+              }
             }}
           />
         ))}

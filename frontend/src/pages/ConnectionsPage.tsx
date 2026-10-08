@@ -101,7 +101,7 @@ export function ConnectionsPage() {
       <ul className="space-y-3">
         {items.map((connection) => (
           <li key={connection.id}>
-            <ConnectionRow connection={connection} onChange={() => bumpReload((n) => n + 1)} />
+            <ConnectionRow connection={connection} tab={tab} onChange={() => bumpReload((n) => n + 1)} />
           </li>
         ))}
       </ul>
@@ -113,9 +113,11 @@ export function ConnectionsPage() {
 
 function ConnectionRow({
   connection,
+  tab,
   onChange,
 }: {
   connection: Connection
+  tab: Tab
   onChange: () => void
 }) {
   const [busy, setBusy] = useState(false)
@@ -165,7 +167,7 @@ function ConnectionRow({
       </div>
 
       <div className="flex shrink-0 flex-col items-end gap-2">
-        {connection.status === 'pending' && connection.responded_at === null && (
+        {connection.status === 'pending' && tab === 'received' && connection.responded_at === null && (
           <>
             <Button onClick={() => act(() => connApi.respond(connection.id, 'accept'))} disabled={busy}>
               Accept
@@ -182,7 +184,7 @@ function ConnectionRow({
           </>
         )}
 
-        {connection.status === 'pending' && (
+        {connection.status === 'pending' && tab === 'sent' && (
           <button
             onClick={() => act(() => connApi.withdraw(connection.id))}
             disabled={busy}
