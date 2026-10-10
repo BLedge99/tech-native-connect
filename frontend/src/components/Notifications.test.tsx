@@ -18,7 +18,7 @@
 
 import { act, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, expect, type Mock, test, vi } from 'vitest'
-
+import { MemoryRouter } from 'react-router-dom'
 import { SessionContext, type SessionValue } from '../hooks/session'
 
 const socket = vi.hoisted(() => ({
@@ -194,15 +194,18 @@ test('the bell reflects the unread count and nothing else is needed for it to wo
   })
 
   render(
-    <SessionContext.Provider value={session}>
-      <NotificationBell />
-    </SessionContext.Provider>,
+    <MemoryRouter>
+      <SessionContext.Provider value={session}>
+        <NotificationBell />
+      </SessionContext.Provider>
+    </MemoryRouter>,
   )
 
   // The badge and the accessible name must agree — they come from the same
   // unread_count, which is the promise specs/07 §6 makes.
-  const button = screen.getByRole('button', { name: /Notifications, 3 unread/ })
+  const button = await screen.findByRole('button', { name: /Notifications, 3 unread/ })
   expect(button).toBeInTheDocument()
+
 
   await userClick(button)
   await waitFor(() => expect(screen.getByText('Alice wants to connect')).toBeInTheDocument())
