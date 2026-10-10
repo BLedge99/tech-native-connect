@@ -151,12 +151,13 @@ export function ToastStack() {
       const last = seen.current.get(data.actor_id ?? 'unknown') ?? 0
       const now = Date.now()
       if (now - last < 5000) {
-        setToasts((prev) =>
-          prev.length ? [...prev.slice(0, prev.length - 1)] : prev,
-        )
-        seen.current.set(data.actor_id ?? 'unknown', now)
-        return
-      }
+      // A repeat from the same actor is suppressed and nothing else. It must
+      // not touch the toasts already on screen: removing one here used to
+      // delete an unrelated actor's toast (B4). Refreshing the timestamp
+      // keeps a continuous burst suppressed.
+      seen.current.set(data.actor_id ?? 'unknown', now)
+      return
+}
       seen.current.set(data.actor_id ?? 'unknown', now)
       const id = `${data.id}-${now}`
       setToasts((prev) => [...prev, { id, text: data.text, actor: data.actor_id }])
