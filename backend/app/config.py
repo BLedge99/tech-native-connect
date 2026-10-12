@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from functools import lru_cache
+from urllib.parse import urlsplit
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -25,6 +27,11 @@ class Settings(BaseSettings):
     app_env: str = "development"
     cors_origins: str = "http://localhost:5173"
 
+    # Where the BROWSER is. The API serves /api/v1, so anything it redirects to
+    # or emails has to name the app's origin — a magic link minted against the
+    # API port lands the user on a 404.
+    app_url: str = "http://localhost:5173"
+
     # Spec 03 §4: hard cap, enforced at the request and the column.
     max_photo_bytes: int = 2 * 1024 * 1024
     max_bio_chars: int = 500
@@ -43,6 +50,20 @@ class Settings(BaseSettings):
     @property
     def cors_origin_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
+
+    @model_validator(mode="after")
+    def require_secure_browser_origins_in_production(self) -> "Settings":
+        """Refuse production URLs that would send auth links or cookies over HTTP."""
+        if self.app_env == "production":
+            if urlsplit(self.app_url).scheme != "https":
+                raise ValueError("APP_URL must use HTTPS when APP_ENV=production")
+            insecure_origins = [
+                origin for origin in self.cors_origin_list
+                if urlsplit(origin).scheme != "https"
+            ]
+            if insecure_origins:
+                raise ValueError("CORS_ORIGINS must contain only HTTPS origins in production")
+        return self
 
 
 @lru_cache

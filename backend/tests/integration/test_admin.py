@@ -335,7 +335,9 @@ async def test_delete_interest_in_use_rejected(client, auth, seeded_refs):
         f"/api/v1/admin/interests/{interest['id']}", headers=admin["csrf"]
     )
     assert response.status_code == 409
-    assert response.json()["error"]["code"] == "skill_in_use"
+    # `interest_in_use`, not the skill code it was copy-pasted from — a client
+    # switching on this code has to take the interest branch.
+    assert response.json()["error"]["code"] == "interest_in_use"
 
 
 # ─── The boundary: admin manages the substrate, not content ──────────────────

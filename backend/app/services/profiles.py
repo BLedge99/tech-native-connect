@@ -87,20 +87,6 @@ async def get_or_create_profile(db: AsyncSession, user: User) -> Profile:
     return profile
 
 
-async def load_profiles(db: AsyncSession) -> dict[uuid.UUID, Profile]:
-    """Eager-load skills/interests/course for a set of users in one pass."""
-    result = await db.execute(
-        select(Profile)
-        .options(
-            selectinload(Profile.skills),
-            selectinload(Profile.interests),
-            selectinload(Profile.course),
-        )
-        .where(Profile.user_id.in_(select(User.id)))
-    )
-    return {p.user_id: p for p in result.scalars().all()}
-
-
 async def get_public_profile(db: AsyncSession, user_id: uuid.UUID) -> Profile:
     result = await db.execute(
         select(Profile)
@@ -109,6 +95,11 @@ async def get_public_profile(db: AsyncSession, user_id: uuid.UUID) -> Profile:
             selectinload(Profile.interests),
             selectinload(Profile.course),
         )
+        # Without this the re-query after `update_profile` hands back the
+        # identity-mapped instance, whose collections were loaded BEFORE the
+        # delete/insert — so saving skills returned the previous list while the
+        # database held the new one.
+        .execution_options(populate_existing=True)
         .where(Profile.user_id == user_id)
     )
     profile = result.scalar_one_or_none()
@@ -231,9 +222,7 @@ def sniff_image_type(data: bytes) -> str | None:
     return None
 
 
-async def save_photo(
-    db: AsyncSession, user: User, *, data: bytes, declared_type: str | None = None
-) -> Photo:
+async def save_photo(db: AsyncSession, user: User, *, data: bytes) -> Photo:
     settings = get_settings()
     if not data:
         raise ValidationFailed({"file": "The file is empty."})
@@ -244,6 +233,8 @@ async def save_photo(
             f"Photos must be {settings.max_photo_bytes // (1024 * 1024)} MB or smaller."
         )
 
+    # The declared content_type is deliberately ignored: a client can send a
+    # shell script labelled image/png, so the bytes are the only evidence.
     actual = sniff_image_type(data)
     if actual is None:
         raise UnsupportedMediaType("Photos must be JPEG, PNG or WebP.")

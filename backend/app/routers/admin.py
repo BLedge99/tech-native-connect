@@ -72,8 +72,6 @@ async def overview(
 ):
     """Four counts, no charts. A bar chart needs a library and does not make
     the demo better."""
-    from app.models import ConnectionRequest as CR
-
     total = await db.scalar(select(func.count()).select_from(User)) or 0
     active = await db.scalar(
         select(func.count()).select_from(User).where(User.is_active.is_(True))
@@ -84,8 +82,8 @@ async def overview(
     ) or 0
     connections = await db.scalar(
         select(func.count())
-        .select_from(CR)
-        .where(CR.status == ConnectionStatus.ACCEPTED)
+        .select_from(ConnectionRequest)
+        .where(ConnectionRequest.status == ConnectionStatus.ACCEPTED)
     ) or 0
     ideas = await db.scalar(select(func.count()).select_from(ProjectIdea)) or 0
     return AdminOverview(
@@ -262,6 +260,21 @@ async def _reference_page(db: AsyncSession, model, limit: int, cursor: str | Non
     return rows, next_cursor
 
 
+async def _reject_taken_name(db: AsyncSession, model, kind: str, name: str, exclude_id) -> None:
+    """`name` is `unique=True` on all three reference tables.
+
+    `create_*` checked; `update_*` did not, so a rename onto a taken name raised
+    an unhandled IntegrityError — a 500 on an admin screen, and the transaction
+    left to unwind.
+    """
+    stmt = select(model.id).where(model.name == name)
+    if exclude_id is not None:
+        # Renaming a row to the name it already has is not a collision.
+        stmt = stmt.where(model.id != exclude_id)
+    if await db.scalar(stmt):
+        raise Conflict(f"That {kind} already exists.")
+
+
 @router.get("/courses", response_model=Page)
 async def list_courses(
     limit: int = Query(default=20, ge=1, le=100),
@@ -304,6 +317,7 @@ async def update_course(
     if course is None:
         raise NotFound("That course does not exist.")
     old = course.name
+    await _reject_taken_name(db, Course, "course", payload.name.strip(), course_id)
     course.name = payload.name.strip()
     await audit(db, admin, "update_course", "course", course.id, {"from": old, "to": course.name})
     await db.commit()
@@ -348,11 +362,13 @@ async def update_skill(
     admin: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    """Renaming is always safe — it is the operation people actually need."""
+    """Renaming is always safe — it is the operation people actually need.
+    Unless the new name is taken, which is a 409 rather than a 500."""
     skill = await db.get(Skill, skill_id)
     if skill is None:
         raise NotFound("That skill does not exist.")
     old = skill.name
+    await _reject_taken_name(db, Skill, "skill", payload.name.strip(), skill_id)
     skill.name = payload.name.strip()
     if payload.category is not None:
         skill.category = payload.category
@@ -425,6 +441,7 @@ async def update_interest(
     if interest is None:
         raise NotFound("That interest does not exist.")
     old = interest.name
+    await _reject_taken_name(db, Interest, "interest", payload.name.strip(), interest_id)
     interest.name = payload.name.strip()
     await audit(db, admin, "update_interest", "interest", interest.id, {"from": old, "to": interest.name})
     await db.commit()
@@ -446,7 +463,10 @@ async def delete_interest(
         .where(profile_interests.c.interest_id == interest_id)
     )
     if in_use:
-        raise Conflict(f"This interest is on {in_use} profiles. Rename it instead.", code="skill_in_use")
+        raise Conflict(
+            f"This interest is on {in_use} profiles. Rename it instead.",
+            code="interest_in_use",
+        )
     await db.delete(interest)
     await audit(db, admin, "delete_interest", "interest", interest_id, {"name": interest.name})
     await db.commit()

@@ -320,8 +320,9 @@ test('09 project ideas board', async ({ page }) => {
   await expect(page.getByRole('heading', { name: NEW_IDEA })).toBeVisible()
   await step(page, 'A developer finds it by search — spec 08 works both ways', 2400)
 
-  await page.getByRole('heading', { name: NEW_IDEA }).click()
-  await expect(page.getByRole('heading', { level: 1 })).toBeVisible()
+  await page.getByRole('link', { name: NEW_IDEA }).click()
+  await expect(page).toHaveURL(/\/ideas\/[0-9a-f-]+$/)
+  await expect(page.getByRole('heading', { level: 1, name: NEW_IDEA })).toBeVisible()
   await beat(page, 2400)
 
   const interested = page.getByRole('button', { name: /Express interest|I'm interested/ })

@@ -16,7 +16,7 @@ from app.errors import (
     NotIdeaOwner,
     ValidationFailed,
 )
-from app.models import ProjectIdea, User, idea_interests
+from app.models import Course, ProjectIdea, User, idea_interests
 from app.models.enums import IdeaCategory
 
 MAX_TITLE = 120
@@ -102,6 +102,41 @@ async def list_ideas(
     return [(i, counts.get(i.id, 0), i.id in mine_rows) for i in ideas]
 
 
+async def _require_course(db: AsyncSession, course_id: uuid.UUID | None) -> None:
+    """A foreign key is not input validation.
+
+    A well-formed UUID naming no course reached the INSERT and raised an
+    unhandled IntegrityError — a 500 for a typo in a form (AGENTS.md §5 rule 5).
+    """
+    if course_id is None:
+        return
+    if await db.scalar(select(Course.id).where(Course.id == course_id)) is None:
+        raise ValidationFailed({"course_id": "Unknown course."})
+
+
+async def interest_summary(
+    db: AsyncSession, idea_id: uuid.UUID, viewer_id: uuid.UUID
+) -> tuple[int, bool]:
+    """(interest_count, viewer_has_interested) for ONE idea, in two queries.
+
+    The detail route used to call list_ideas(categories=[...], limit=200) and
+    search the result, so past 201 ideas in a category the idea being asked
+    about was not in the window and the answer silently became "no interests".
+    """
+    count = await db.scalar(
+        select(func.count())
+        .select_from(idea_interests)
+        .where(idea_interests.c.idea_id == idea_id)
+    )
+    mine = await db.scalar(
+        select(idea_interests.c.idea_id).where(
+            idea_interests.c.idea_id == idea_id,
+            idea_interests.c.user_id == viewer_id,
+        )
+    )
+    return count or 0, mine is not None
+
+
 async def create_idea(
     db: AsyncSession,
     author: User,
@@ -116,6 +151,7 @@ async def create_idea(
     clean_desc = _validate_description(description)
     if category not in {c.value for c in IdeaCategory}:
         raise ValidationFailed({"category": "Unknown category."})
+    await _require_course(db, course_id)
     skills = _clean_skills(skills_needed or [])
 
     idea = ProjectIdea(
@@ -151,6 +187,7 @@ async def update_idea(
     if "skills_needed" in fields:
         idea.skills_needed = _clean_skills(fields["skills_needed"] or [])
     if "course_id" in fields:
+        await _require_course(db, fields["course_id"])
         idea.course_id = fields["course_id"]
     if "is_open" in fields:
         idea.is_open = bool(fields["is_open"])
@@ -267,6 +304,7 @@ def _clean_skills(skills: list[str]) -> list[str]:
 __all__ = [
     "get_idea",
     "list_ideas",
+    "interest_summary",
     "create_idea",
     "update_idea",
     "delete_idea",

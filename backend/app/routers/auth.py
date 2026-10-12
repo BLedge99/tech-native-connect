@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import time
 
 from fastapi import APIRouter, Depends, Response
 from fastapi.responses import RedirectResponse
@@ -16,7 +17,7 @@ from app.dependencies import (
     get_current_session,
     require_csrf,
 )
-from app.errors import BadRequest
+from app.errors import BadRequest, TooManyRequests
 from app.models import Session
 from app.schemas import LoginRequest, MagicLinkRequest, RegisterRequest
 from app.serializers import user_private
@@ -24,6 +25,42 @@ from app.services import auth as auth_svc
 from app.services.mailer import send_magic_link
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
+
+
+# ─── Throttling ──────────────────────────────────────────────────────────────
+#
+# ponytail: in-process fixed window, keyed by (endpoint, normalised email). One
+# uvicorn worker is already a hard requirement here (see the WebSocket registry
+# in realtime.py), so a shared counter would buy nothing. Per-email rather than
+# per-IP because the threat this answers is hammering ONE account and mailing a
+# victim repeatedly — both need a cap on one key, and per-IP would also have
+# meant every integration test shares one budget.
+#
+# Upgrade path if the worker count ever changes: Redis INCR with a TTL, keyed
+# the same way. The call sites would not move.
+_WINDOW_SECONDS = 60.0
+_attempts: dict[str, list[float]] = {}
+
+# Keys are pruned only when that exact key comes back, so a stream of distinct
+# emails would otherwise grow this dict forever. Sweep once it gets big enough
+# to matter rather than on every request.
+_SWEEP_AT = 512
+
+LOGIN_LIMIT = 20
+MAGIC_LINK_LIMIT = 5
+
+
+def _throttle(key: str, limit: int) -> None:
+    now = time.monotonic()
+    recent = [t for t in _attempts.get(key, ()) if now - t < _WINDOW_SECONDS]
+    if len(recent) >= limit:
+        _attempts[key] = recent
+        raise TooManyRequests()
+    recent.append(now)
+    _attempts[key] = recent
+    if len(_attempts) > _SWEEP_AT:
+        for stale in [k for k, ts in _attempts.items() if not ts or now - ts[-1] >= _WINDOW_SECONDS]:
+            del _attempts[stale]
 
 
 def set_session_cookie(response, token: bytes) -> None:
@@ -67,6 +104,7 @@ async def register(
 
 @router.post("/login")
 async def login(payload: LoginRequest, db: AsyncSession = Depends(get_db)):
+    _throttle(f"login:{auth_svc.normalise_email(payload.email)}", LOGIN_LIMIT)
     user = await auth_svc.authenticate(db, email=payload.email, password=payload.password)
     token, session_row = await auth_svc.create_session(db, user)
     await db.commit()
@@ -101,10 +139,15 @@ async def magic_link(payload: MagicLinkRequest, db: AsyncSession = Depends(get_d
     """Always 202, whether or not the email exists. A 404 here turns this
     endpoint into an account-enumeration oracle."""
     settings = get_settings()
+    # Unauthenticated and it sends mail: without a cap it is a queue for
+    # spamming one person's inbox, and it was.
+    _throttle(
+        f"magic-link:{auth_svc.normalise_email(payload.email)}", MAGIC_LINK_LIMIT
+    )
     user = await auth_svc.get_user_by_email(db, payload.email)
     if user is not None and user.is_active:
         token = await auth_svc.issue_magic_link(db, user)
-        link = auth_svc.magic_link_url(token, f"http://localhost:8000")
+        link = auth_svc.magic_link_url(token, settings.app_url)
         await send_magic_link(user.email, link)
         await db.commit()
     return _json(
@@ -125,8 +168,9 @@ async def magic_link_verify(token: str, db: AsyncSession = Depends(get_db)):
     session_token, _session = await auth_svc.create_session(db, user)
     await db.commit()
 
-    # 302 back into the app. The cookie is set on the redirect response.
-    response = RedirectResponse(url="/", status_code=302)
+    # 302 back into the APP, not back into the API. The cookie is set on the
+    # redirect response, and cookies ignore the port, so it travels.
+    response = RedirectResponse(url=f"{get_settings().app_url}/", status_code=302)
     set_session_cookie(response, session_token)
     return response
 

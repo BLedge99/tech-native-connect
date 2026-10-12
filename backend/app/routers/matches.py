@@ -13,7 +13,6 @@ from app.models import User
 from app.schemas import MatchOut, Page
 from app.serializers import match_out
 from app.services import match_service
-from app.services.connections import accepted_request_for
 
 router = APIRouter(prefix="/api/v1", tags=["matches"])
 
@@ -50,8 +49,10 @@ async def list_matches(
         limit=limit + 1,
         cursor=cursor,
     )
+    # `len(items) == limit` after slicing reports a page that may not exist: a
+    # result set that fits exactly looks full. Compare before slicing.
+    has_more = len(items) > limit
     items = items[:limit]
-    has_more = len(items) == limit
     # The cursor encodes (score, user_id) so the ordering is a total order.
     # A fuzzy tiebreak would let page 2 repeat rows from page 1.
     last = items[-1] if items else None

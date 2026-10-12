@@ -150,10 +150,10 @@ export function ToastStack() {
 
       const last = seen.current.get(data.actor_id ?? 'unknown') ?? 0
       const now = Date.now()
+      // Suppress the repeat and touch nothing else. This used to delete the
+      // OLDEST toast and drop the new one — evicting an unrelated person's
+      // notification because someone typed quickly.
       if (now - last < 5000) {
-        setToasts((prev) =>
-          prev.length ? [...prev.slice(0, prev.length - 1)] : prev,
-        )
         seen.current.set(data.actor_id ?? 'unknown', now)
         return
       }

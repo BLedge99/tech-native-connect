@@ -19,6 +19,7 @@ from app.errors import (
     validation_error_handler,
 )
 from app.routers import admin, auth, connections, ideas, matches, messaging, notifications, users
+from app.security import SecurityMiddleware
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
@@ -46,6 +47,9 @@ app = FastAPI(
         "Connects software developers with business developers on the same "
         "bootcamp course. See AGENTS.md and specs/ for the full specification."
     ),
+    docs_url="/docs" if settings.app_env != "production" else None,
+    redoc_url="/redoc" if settings.app_env != "production" else None,
+    openapi_url="/openapi.json" if settings.app_env != "production" else None,
     lifespan=lifespan,
 )
 
@@ -54,9 +58,10 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origin_list,
     allow_credentials=True,   # required for the session cookie
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "X-CSRF-Token"],
 )
+app.add_middleware(SecurityMiddleware, settings=settings)
 
 app.add_exception_handler(AppError, app_error_handler)
 app.add_exception_handler(StarletteHTTPException, http_error_handler)

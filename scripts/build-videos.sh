@@ -3,16 +3,17 @@
 #
 #   ./scripts/build-videos.sh
 #
-# Two jobs:
+# Three jobs:
 #   1. side-by-side pairs (the two-window recordings) become one video, A on the
 #      left and B on the right, so live messaging is visible in a single file.
-#   2. everything becomes .mp4 (H.264). Playwright records VP8 in .webm, which
+#   2. narration and synchronized subtitle captions are muxed into every video.
+#   3. everything becomes .mp4 (H.264). Playwright records VP8 in .webm, which
 #      QuickTime and half the world will not open.
 #
 # ffmpeg runs in a container: the host has none, and the copy bundled with
 # Playwright is stripped down to `scale` and VP8 — no hstack, no libx264.
 #
-# Input:  frontend/videos-raw/*.webm   (written by the recordings)
+# Input:  frontend/videos-raw/*.webm and narration/*.wav, narration/*.srt
 # Output: videos/*.mp4
 
 set -euo pipefail
@@ -27,8 +28,28 @@ PANE_W=960
 PANE_H=600
 FPS=25
 CRF=23
+NARRATION="$RAW/narration"
+SUB_STYLE="FontName=DejaVu Sans,FontSize=19,PrimaryColour=&H00FFFFFF,OutlineColour=&H00101816,BackColour=&HAA0A100F,BorderStyle=3,Outline=1,Shadow=0,Alignment=2,MarginV=66"
 
 [ -d "$RAW" ] || { echo "no $RAW — run the recordings first:"; echo "  docker compose exec -T frontend npx playwright test -c playwright.videos.config.ts"; exit 1; }
+
+# Check every input before replacing the existing MP4s. A partial narration run
+# must never leave the output directory empty or produce silent demo videos.
+for f in "$RAW"/*.webm; do
+  name="$(basename "$f")"
+  case "$name" in
+    page@*|00-smoke*) continue ;;
+    *__A.webm)
+      base="${name%__A.webm}"
+      [ -f "$RAW/${base}__B.webm" ] || { echo "missing pair: ${base}__B.webm"; exit 1; }
+      ;;
+    *__B.webm) continue ;;
+    *__[AB].webm) continue ;;
+    *) base="${name%.webm}" ;;
+  esac
+  [ -f "$NARRATION/$base.wav" ] || { echo "missing narration audio: $NARRATION/$base.wav"; echo "  run scripts/create-video-narration.ps1"; exit 1; }
+  [ -f "$NARRATION/$base.srt" ] || { echo "missing subtitles: $NARRATION/$base.srt"; echo "  run scripts/create-video-narration.ps1"; exit 1; }
+done
 
 rm -rf "$OUT"
 mkdir -p "$OUT"
@@ -40,8 +61,11 @@ ff() {
 # VP8 in, H.264 out, dimensions rounded to even numbers (H.264 requires it).
 to_mp4() {
   ff -hide_banner -loglevel error -y -i "/raw/$1" \
-    -vf "scale=trunc(iw/2)*2:trunc(ih/2)*2,fps=$FPS" \
+    -i "/raw/narration/${1%.webm}.wav" \
+    -vf "scale=trunc(iw/2)*2:trunc(ih/2)*2,fps=$FPS,subtitles=/raw/narration/${1%.webm}.srt:force_style='$SUB_STYLE'" \
+    -map 0:v:0 -map 1:a:0 \
     -c:v libx264 -preset slow -crf "$CRF" -pix_fmt yuv420p \
+    -c:a aac -b:a 128k -af "volume=0.92,apad" -shortest \
     -movflags +faststart "/out/${1%.webm}.mp4"
 }
 
@@ -54,14 +78,16 @@ side_by_side() {
   local base="$1"
   ff -hide_banner -loglevel error -y \
     -i "/raw/${base}__A.webm" -i "/raw/${base}__B.webm" \
+    -i "/raw/narration/${base}.wav" \
     -filter_complex "\
       [0:v]scale=${PANE_W}:${PANE_H}:force_original_aspect_ratio=decrease,\
 pad=${PANE_W}:${PANE_H}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=${FPS},tpad=stop_mode=clone:stop_duration=3[a];\
       [1:v]scale=${PANE_W}:${PANE_H}:force_original_aspect_ratio=decrease,\
 pad=${PANE_W}:${PANE_H}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=${FPS},tpad=stop_mode=clone:stop_duration=3[b];\
-      [a][b]hstack=inputs=2[v]" \
-    -map "[v]" -shortest \
+      [a][b]hstack=inputs=2,subtitles=/raw/narration/${base}.srt:force_style='${SUB_STYLE}'[v]" \
+    -map "[v]" -map "2:a:0" -shortest \
     -c:v libx264 -preset slow -crf "$CRF" -pix_fmt yuv420p \
+    -c:a aac -b:a 128k -af "volume=0.92,apad" \
     -movflags +faststart "/out/${base}-side-by-side.mp4"
 }
 

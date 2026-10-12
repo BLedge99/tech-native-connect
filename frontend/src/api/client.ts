@@ -198,7 +198,10 @@ export const messages = {
   threads: (cursor?: string) =>
     api.get<Page<Thread>>(`/api/v1/threads${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`),
   thread: (id: string) => api.get<Thread>(`/api/v1/threads/${id}`),
-  history: (id: string) => api.get<Page<Message>>(`/api/v1/threads/${id}/messages`),
+  history: (id: string, cursor?: string) =>
+    api.get<Page<Message>>(
+      `/api/v1/threads/${id}/messages${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`,
+    ),
   send: (id: string, body: string) =>
     api.post<Message>(`/api/v1/threads/${id}/messages`, { body }),
   markRead: (id: string) => api.post<void>(`/api/v1/threads/${id}/read`),

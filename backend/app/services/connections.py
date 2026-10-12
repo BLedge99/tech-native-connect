@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.errors import (
@@ -207,8 +207,12 @@ async def connection_state(
     matching (specs/04 §5).
     """
     request = await find_request(db, viewer_id, other_id)
-    if request is None:
-        return "none"
+    return "none" if request is None else state_of(request, viewer_id)
+
+
+def state_of(request: ConnectionRequest, viewer_id: uuid.UUID) -> str:
+    """The state string for a row already loaded. Shared with the batched
+    lookup below so the two can never disagree."""
     if request.status == ConnectionStatus.ACCEPTED:
         return "connected"
     if request.status == ConnectionStatus.PENDING:
@@ -218,6 +222,39 @@ async def connection_state(
             else "pending_outgoing"
         )
     return "declined"
+
+
+async def connection_states(
+    db: AsyncSession, viewer_id: uuid.UUID, other_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, str]:
+    """Every listed person's state in one query.
+
+    Awaiting `connection_state` per row made list endpoints O(rows) in database
+    work, which is how a 20-row page issued sixty statements.
+    """
+    if not other_ids:
+        return {}
+    wanted = set(other_ids)
+    rows = (
+        await db.execute(
+            select(ConnectionRequest).where(
+                or_(
+                    (ConnectionRequest.pair_lo == viewer_id)
+                    & (ConnectionRequest.pair_hi.in_(wanted)),
+                    (ConnectionRequest.pair_hi == viewer_id)
+                    & (ConnectionRequest.pair_lo.in_(wanted)),
+                )
+            )
+        )
+    ).scalars()
+    out: dict[uuid.UUID, str] = {}
+    for request in rows:
+        other = (
+            request.pair_hi if request.pair_lo == viewer_id else request.pair_lo
+        )
+        if other in wanted:
+            out[other] = state_of(request, viewer_id)
+    return out
 
 
 async def summary(db: AsyncSession, user_id: uuid.UUID) -> dict[str, int]:
@@ -368,19 +405,6 @@ async def withdraw(db: AsyncSession, request: ConnectionRequest, viewer: User) -
     await db.commit()
 
 
-async def accepted_request_for(
-    db: AsyncSession, user_a: uuid.UUID, user_b: uuid.UUID
-) -> ConnectionRequest | None:
-    lo, hi = pair(user_a, user_b)
-    return await db.scalar(
-        select(ConnectionRequest).where(
-            ConnectionRequest.pair_lo == lo,
-            ConnectionRequest.pair_hi == hi,
-            ConnectionRequest.status == ConnectionStatus.ACCEPTED,
-        )
-    )
-
-
 __all__ = [
     "Action",
     "Actor",
@@ -394,9 +418,9 @@ __all__ = [
     "get_request_or_404",
     "load_participant_requests",
     "connection_state",
+    "connection_states",
     "summary",
     "send_request",
     "respond",
     "withdraw",
-    "accepted_request_for",
 ]

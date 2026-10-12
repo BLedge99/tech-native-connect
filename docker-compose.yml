@@ -14,7 +14,7 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-bootcamp}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-bootcamp} -d ${POSTGRES_DB:-bootcamp_connect}"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -56,6 +56,9 @@ services:
       MAILPIT_SMTP_PORT: ${MAILPIT_SMTP_PORT:-1025}
       MAILPIT_WEB_URL: ${MAILPIT_WEB_URL:-http://localhost:8025}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173}
+      # The browser origin. Magic links are emailed and verified against this,
+      # not against the API port — a link minted on :8000 lands on a 404.
+      APP_URL: ${APP_URL:-http://localhost:5173}
       SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:-bootcamp-dev-admin}
       # Integration tests. Separate database from dev so a test run cannot
       # truncate the demo data. Set here so `docker compose exec backend pytest`

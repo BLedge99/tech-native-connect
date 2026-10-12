@@ -19,7 +19,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.errors import BadRequest, ProfileIncomplete
-from app.services.pagination import decode_cursor
 from app.models import (
     ConnectionRequest,
     Interest,
@@ -47,6 +46,7 @@ class MatchItem:
     view: ProfileView
     score: int
     reasons: list[str]
+    shared_skill_ids: list[uuid.UUID]
     shared_skill_names: list[str]
     shared_interest_names: list[str]
     connection_state: str
@@ -197,7 +197,7 @@ async def rank_for_viewer(
         result = score_match(viewer_view, view)
         rows.append((result, user, view))
 
-    rows.sort(key=lambda row: sort_key(row[0], row[2].user_id))
+    rows.sort(key=lambda row: sort_key(row[0].score, row[2].user_id))
 
     if cursor:
         # Keyset over (score, user_id). Offsets would skip or repeat rows when
@@ -206,13 +206,14 @@ async def rank_for_viewer(
         rows = [
             row
             for row in rows
-            if sort_key(row[0], row[2].user_id) > (after_score, after_id)
+            if sort_key(row[0].score, row[2].user_id) > (after_score, after_id)
         ]
 
-    # States computed after ordering, in as few queries as we can.
-    states: dict[uuid.UUID, str] = {}
-    for _, user, _view in rows[:limit]:
-        states[user.id] = await conn_svc.connection_state(db, viewer.id, user.id)
+    # States for the whole page in ONE query. Awaiting connection_state per row
+    # made the statement count grow with `limit`.
+    states = await conn_svc.connection_states(
+        db, viewer.id, [user.id for _r, user, _v in rows[:limit]]
+    )
 
     return [
         MatchItem(
@@ -220,6 +221,7 @@ async def rank_for_viewer(
             view=view,
             score=result.score,
             reasons=result.reasons,
+            shared_skill_ids=result.shared_skill_ids,
             shared_skill_names=result.shared_skill_names,
             shared_interest_names=result.shared_interest_names,
             connection_state=states.get(user.id, "none"),
@@ -232,7 +234,12 @@ async def rank_for_viewer(
 
 
 def encode_cursor(score: int, user_id: uuid.UUID) -> str:
-    payload = json.dumps({"s": score, "u": str(user_id)}).encode()
+    """Stores `sort_key`'s first element, which is the NEGATED score.
+
+    Encoding the positive score here while `rank_for_viewer` compares against
+    `sort_key` filtered out every row, so page 2 was always empty.
+    """
+    payload = json.dumps({"s": -score, "u": str(user_id)}).encode()
     return base64.urlsafe_b64encode(payload).decode().rstrip("=")
 
 

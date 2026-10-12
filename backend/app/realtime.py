@@ -18,11 +18,32 @@ class ConnectionManager:
     def __init__(self) -> None:
         self._user_sockets: dict[Any, set[WebSocket]] = defaultdict(set)
         self._thread_sockets: dict[Any, set[WebSocket]] = defaultdict(set)
+        # session id -> sockets. So revoking a session can close what it opened:
+        # `load_session` runs once, at the handshake, so logout and deactivation
+        # otherwise leave the socket connected and still delivering.
+        self._session_sockets: dict[Any, set[WebSocket]] = defaultdict(set)
         self._lock = asyncio.Lock()
 
-    async def connect_user(self, user_id: Any, ws: WebSocket) -> None:
+    async def connect_user(self, user_id: Any, ws: WebSocket, session_id: Any = None) -> None:
         async with self._lock:
             self._user_sockets[user_id].add(ws)
+            if session_id is not None:
+                self._session_sockets[session_id].add(ws)
+
+    async def close_session_sockets(self, session_id: Any) -> None:
+        """Close everything a revoked session opened. Called from the revoke
+        paths in services/auth.py — one worker, so the registry is authoritative.
+
+        Fire and forget, deliberately. uvicorn's `WebSocket.close()` awaits the
+        peer's close frame, so awaiting it here turns the revoking request into
+        a hang for any caller sharing the loop with that socket — which is
+        exactly what the integration test does with a synchronous HTTP client.
+        The socket still closes; the request does not wait for the handshake.
+        """
+        async with self._lock:
+            targets = self._session_sockets.pop(session_id, set())
+        for ws in targets:
+            asyncio.create_task(_close_socket(ws))
 
     async def disconnect(self, user_id: Any, ws: WebSocket) -> None:
         async with self._lock:
@@ -30,6 +51,8 @@ class ConnectionManager:
             if not self._user_sockets[user_id]:
                 self._user_sockets.pop(user_id, None)
             for sockets in self._thread_sockets.values():
+                sockets.discard(ws)
+            for sockets in self._session_sockets.values():
                 sockets.discard(ws)
 
     async def subscribe_thread(self, user_id: Any, thread_id: Any, ws: WebSocket) -> None:
@@ -85,3 +108,10 @@ class ConnectionManager:
 
 
 manager = ConnectionManager()
+
+
+async def _close_socket(ws: WebSocket) -> None:
+    try:
+        await ws.close(code=4003)
+    except Exception:
+        pass  # a socket that is already gone is the outcome we wanted

@@ -77,6 +77,15 @@ class UnsupportedMediaType(AppError):
     """That file type is not supported."""
 
 
+class TooManyRequests(AppError):
+    status_code = 429
+    code = "rate_limited"
+    """Too many attempts. Try again shortly."""
+
+    def __init__(self, message: str = "Too many attempts. Try again in a minute.") -> None:
+        super().__init__(message)
+
+
 class ValidationFailed(AppError):
     status_code = 422
     code = "validation_error"
@@ -172,11 +181,6 @@ class LastAdmin(Conflict):
     """You cannot remove the last admin."""
 
     code = "last_admin"
-
-
-class InUseConflict(Conflict):
-    code = "skill_in_use"
-    """That is in use. Rename it instead."""
 
 
 def error_body(code: str, message: str, fields: dict | None = None) -> dict:

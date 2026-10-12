@@ -27,6 +27,7 @@ from app.errors import (
     Unauthenticated,
 )
 from app.models import MagicLinkToken, Profile, Session, User
+from app.realtime import manager
 
 # ponytail: default params are the argon2 defaults and are fine here. If login
 # latency ever matters in production, tune time_memory up rather than reaching
@@ -156,12 +157,23 @@ async def load_session(db: AsyncSession, token: bytes | None) -> tuple[Session, 
 
 
 async def revoke_session(db: AsyncSession, session: Session) -> None:
+    # Read the id first: after commit the row is gone and touching the instance
+    # would try to reload it.
+    session_id = session.id
     await db.delete(session)
     await db.commit()
+    await manager.close_session_sockets(session_id)
 
 
 async def revoke_all_sessions(db: AsyncSession, user_id: uuid.UUID) -> None:
+    # Ids first: a DELETE is immediately visible to the rest of its own
+    # transaction, so selecting afterwards returns nothing.
+    session_ids = list(await db.scalars(select(Session.id).where(Session.user_id == user_id)))
     await db.execute(delete(Session).where(Session.user_id == user_id))
+    # Every one of those sessions may own a live socket, and revocation has to
+    # reach those too — not just the next HTTP request.
+    for session_id in session_ids:
+        await manager.close_session_sockets(session_id)
 
 
 def encode_csrf(token: bytes) -> str:

@@ -98,6 +98,12 @@ export function ThreadPage() {
   const [draft, setDraft] = useState('')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  // B16. The newest page has a cursor back through everything older. Without
+  // this control a conversation over one page is silently truncated, and
+  // because loadHistory merges by id the older messages never arrive on their
+  // own either.
+  const [olderCursor, setOlderCursor] = useState<string | null>(null)
+  const [loadingOlder, setLoadingOlder] = useState(false)
 
   const threadQuery = useQuery(() => msgApi.thread(threadId!), [threadId], { skip: !threadId })
   const bottomRef = useRef<HTMLDivElement>(null)
@@ -115,25 +121,42 @@ export function ThreadPage() {
   // frame for its own message, so nothing puts it back.
   //
   // Messages are never deleted in this app, so a union cannot go stale.
+  const mergeInto = (prev: Message[], page: Message[]) => {
+    const byId = new Map(prev.map((m) => [m.id, m]))
+    for (const m of page) {
+      const existing = byId.get(m.id)
+      // A pending entry is the optimistic copy; the server copy is not an
+      // improvement over it.
+      byId.set(m.id, existing?.pending ? existing : m)
+    }
+    return [...byId.values()].sort((a, b) => a.created_at.localeCompare(b.created_at))
+  }
+
   const loadHistory = async () => {
     if (!threadId) return
     try {
       const page = await msgApi.history(threadId)
-      setMessages((prev) => {
-        const byId = new Map(prev.map((m) => [m.id, m]))
-        for (const m of page.items ?? []) {
-          const existing = byId.get(m.id)
-          // A pending entry is the optimistic copy; the server copy is not an
-          // improvement over it.
-          byId.set(m.id, existing?.pending ? existing : m)
-        }
-        return [...byId.values()].sort((a, b) => a.created_at.localeCompare(b.created_at))
-      })
+      setMessages((prev) => mergeInto(prev, page.items ?? []))
+      setOlderCursor(page.next_cursor ?? null)
       setError(null)
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not load messages.')
     } finally {
       setLoading(false)
+    }
+  }
+
+  const loadOlder = async () => {
+    if (!threadId || !olderCursor || loadingOlder) return
+    setLoadingOlder(true)
+    try {
+      const page = await msgApi.history(threadId, olderCursor)
+      setMessages((prev) => mergeInto(prev, page.items ?? []))
+      setOlderCursor(page.next_cursor ?? null)
+    } catch {
+      setError('Could not load older messages.')
+    } finally {
+      setLoadingOlder(false)
     }
   }
 
@@ -217,8 +240,14 @@ export function ThreadPage() {
     }
   }
 
+  // Every hook above this line runs on EVERY render. Returning early before them
+  // — which this component used to do with `if (loading)` — makes the first
+  // render run fewer hooks than the second, and React says so loudly while the
+  // socket listener below quietly does not get registered. B3.
   if (loading) return <Spinner label="Opening conversation" />
-  if (error) return <ErrorState message={error} onRetry={() => void loadHistory()} />
+  if (error && messages.length === 0) {
+    return <ErrorState message={error} onRetry={() => void loadHistory()} />
+  }
 
   const thread = threadQuery.data as Thread | null
 
@@ -237,6 +266,17 @@ export function ThreadPage() {
       </header>
 
       <div ref={scrollRef} onScroll={onScroll} className="flex-1 overflow-auto px-4 py-3">
+        {olderCursor && (
+          <div className="mb-3 text-center">
+            <button
+              onClick={() => void loadOlder()}
+              disabled={loadingOlder}
+              className="rounded-lg border border-slate-300 px-3 py-1 text-sm text-slate-600 disabled:opacity-50"
+            >
+              {loadingOlder ? 'Loading…' : 'Load older messages'}
+            </button>
+          </div>
+        )}
         {messages.length === 0 && (
           <p className="py-8 text-center text-sm text-slate-400">
             No messages yet. Say hello.
@@ -251,7 +291,7 @@ export function ThreadPage() {
                   mine ? 'bg-brand-600 text-white' : 'bg-slate-100 text-slate-900'
                 } ${message.pending ? 'opacity-60' : ''}`}
               >
-                {message.body}
+                <span>{message.body}</span>
                 {!message.pending && (
                   <span className="ml-2 text-[10px] opacity-70">
                     {new Date(message.created_at).toLocaleTimeString([], {

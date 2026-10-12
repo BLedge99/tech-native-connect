@@ -164,8 +164,8 @@ def test_ties_break_on_candidate_id():
     a, b = view(role=DEV), view(role=DEV)
     low = MatchResult(score=10, reasons=[], shared_skill_ids=[], shared_skill_names=[], shared_interest_names=[])
     high_id = max(a.user_id, b.user_id)
-    assert sort_key(low, high_id) == sort_key(low, high_id)
-    assert sort_key(low, high_id)[1] == high_id
+    assert sort_key(low.score, high_id) == sort_key(low.score, high_id)
+    assert sort_key(low.score, high_id) == (-10, high_id)
 
 
 # ─── Reasons ─────────────────────────────────────────────────────────────────

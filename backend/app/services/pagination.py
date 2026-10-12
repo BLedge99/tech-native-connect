@@ -40,15 +40,3 @@ def decode_cursor(cursor: str) -> tuple[datetime | float | int, UUID]:
         return value, UUID(payload["u"])
     except (ValueError, TypeError, KeyError, OverflowError, binascii.Error) as exc:
         raise BadRequest("That pagination cursor is invalid.", code="invalid_cursor") from exc
-
-
-def next_cursor_or_none(rows: list, limit: int, sort_of) -> str | None:
-    """None when the page is the last one.
-
-    Requires `limit + 1` rows to have been fetched, so a full page is only
-    reported as "there is more" when there genuinely is.
-    """
-    if len(rows) < limit + 1:
-        return None
-    last = rows[limit - 1]
-    return encode_cursor(sort_of(last), last.id)
