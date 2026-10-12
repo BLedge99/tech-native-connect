@@ -9,7 +9,7 @@ not a UI annoyance.
 **Blocks:** [06 — Messaging](06_messaging.md),
 [07 — Notifications](07_notifications.md)
 
-**Implementation status:** Not started.
+**Implementation status:** In progress.
 
 ---
 

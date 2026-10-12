@@ -3,7 +3,7 @@
 Nine required features, in build order. Each has a finish line that can be
 checked without asking anyone's opinion.
 
-**Deadline:** 15 October 2026. **Today:** 1 October 2026.
+**Deadline:** 15 October 2026. **Today:** 11 October 2026.
 **Rules:** [`AGENTS.md`](AGENTS.md) · **Shared contract:**
 [`specs/00_conventions.md`](specs/00_conventions.md)
 
@@ -46,7 +46,7 @@ command that runs all three test suites. Swagger reachable at `/docs`.
 **Finish line:** a fresh clone runs `docker compose up --build` on a clean
 machine and a teammate can register a user end to end with no code changes.
 
-**Status:** Not started.
+**Status:** In progress.
 
 ---
 
@@ -72,7 +72,7 @@ skills and roles afterwards, and matching is gated until they do.
 - Tests: signup, login, wrong password, logout, magic link, session expiry,
   `current_user` auth guard.
 
-**Status:** Not started.
+**Status:** In progress.
 
 ---
 
@@ -97,7 +97,7 @@ allowed to see. Admin override with an audit record.
 - Tests: upload valid, oversize, wrong type, edit own, edit other forbidden,
   email not leaked, completion flag logic, admin override is audited.
 
-**Status:** Not started.
+**Status:** In progress.
 
 ---
 
@@ -124,7 +124,7 @@ matches, incomplete-profile prompt, and recent activity.
 - Tests: logged-out redirect, logged-in feed render, incomplete-profile prompt,
   degraded-state render.
 
-**Status:** Not started.
+**Status:** In progress.
 
 ---
 
@@ -151,7 +151,7 @@ and interest. Every suggestion carries a plain-English reason. Gated behind
 - Tests: score ordering, each filter individually and combined, completion
   gate, self-exclusion, existing-connection exclusion, reason text.
 
-**Status:** Not started.
+**Status:** In progress.
 
 ---
 
@@ -175,7 +175,7 @@ you already answered.
 - Tests: full transition table, invalid transitions, authorisation on every
   action, notification created on accept.
 
-**Status:** Not started.
+**Status:** In progress.
 
 ---
 
@@ -199,7 +199,7 @@ counts.
 - Tests: send, receive, persistence, non-participant forbidden, connection
   required, unread counts, reconnect without duplication.
 
-**Status:** Not started.
+**Status:** In progress.
 
 ---
 
@@ -223,7 +223,7 @@ existing WebSocket.
 - Tests: each trigger fires once and not twice, badge arithmetic, mark read,
   recipient scoping.
 
-**Status:** Not started.
+**Status:** In progress.
 
 ---
 
@@ -245,7 +245,7 @@ interest, which notifies the poster.
 - Tests: create, edit own, edit other forbidden, delete, list, filters,
   interest triggers exactly one notification, empty state.
 
-**Status:** Not started.
+**Status:** In progress.
 
 ---
 
@@ -270,7 +270,7 @@ everywhere.
 - Tests: admin auth on every route, CRUD, deactivation blocks login, promotion,
   audit log written and readable.
 
-**Status:** Not started.
+**Status:** In progress.
 
 ---
 

@@ -6,7 +6,7 @@ the app depends on, and see who is using it.
 **Depends on:** [03 — Profiles](03_profiles.md), [02 — Registration](02_registration_and_login.md)
 **Blocks:** nothing. **Most cuttable feature** — see [`roadmap.md`](../roadmap.md) §Cut line.
 
-**Implementation status:** Not started.
+**Implementation status:** In progress.
 
 ---
 

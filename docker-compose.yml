@@ -1,0 +1,57 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-bootcamp}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-bootcamp}
+      POSTGRES_DB: ${POSTGRES_DB:-bootcamp_connect}
+      POSTGRES_INITDB_ARGS: --auth-local=scram-sha-256
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-bootcamp} -d ${POSTGRES_DB:-bootcamp_connect}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  mailpit:
+    image: axllent/mailpit:latest
+    ports:
+      - "1025:1025"
+      - "8025:8025"
+
+  # Keep one worker: the realtime connection registry is in-process.
+  backend:
+    build: ./backend
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-bootcamp}:${POSTGRES_PASSWORD:-bootcamp}@db:5432/${POSTGRES_DB:-bootcamp_connect}
+      SESSION_SECRET: ${SESSION_SECRET:-development-only-change-me}
+      APP_ENV: ${APP_ENV:-development}
+      MAILPIT_SMTP_HOST: mailpit
+      MAILPIT_SMTP_PORT: 1025
+      MAILPIT_WEB_URL: http://localhost:8025
+      CORS_ORIGINS: http://localhost:5173
+      ADMIN_EMAILS: ${ADMIN_EMAILS:-}
+      SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:-}
+      DEMO_SEED_PASSWORD: ${DEMO_SEED_PASSWORD:-}
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      mailpit:
+        condition: service_started
+
+  frontend:
+    build: ./frontend
+    environment:
+      VITE_BACKEND_URL: http://backend:8000
+    ports:
+      - "5173:5173"
+    depends_on:
+      - backend
+
+volumes:
+  postgres_data:

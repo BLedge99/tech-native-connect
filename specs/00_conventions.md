@@ -4,7 +4,7 @@
 before reading anything else. If a feature spec and this document disagree,
 this document wins — and the feature spec is wrong and should be fixed.
 
-**Status:** Not started.
+**Status:** In progress.
 **Applies to:** every feature.
 
 ---

@@ -6,7 +6,7 @@ reliably. Everything else depends on this working.
 **Depends on:** foundations only ([roadmap](../roadmap.md) §0)
 **Blocks:** every other feature.
 
-**Implementation status:** Not started.
+**Implementation status:** In progress.
 
 ---
 

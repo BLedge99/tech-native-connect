@@ -8,7 +8,7 @@ sensibly, and enough for someone to decide whether they want to talk to you.
 [05 — Connection requests](05_connection_requests.md),
 [08 — Project ideas](08_project_ideas.md), [09 — Admin](09_admin.md)
 
-**Implementation status:** Not started.
+**Implementation status:** In progress.
 
 ---
 

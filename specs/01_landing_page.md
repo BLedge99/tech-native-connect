@@ -8,7 +8,7 @@ somewhere useful.
 [03 — Profiles](03_profiles.md)
 **Blocks:** nothing. This is the most cuttable feature on the board.
 
-**Implementation status:** Not started.
+**Implementation status:** In progress.
 
 ---
 

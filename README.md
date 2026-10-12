@@ -10,17 +10,16 @@ business developers want someone who can build the thing they keep describing.
 This app lists the people on your course, ranks the ones you overlap with, and
 tells you why.
 
-**Status:** specification complete, implementation not started. Demo target
-15 October 2026.
+**Status:** the required demo surfaces and APIs are implemented. Full-stack
+verification against PostgreSQL and browser E2E coverage remain in progress.
+Demo target: 15 October 2026.
 
 ---
 
-## Documentation first
+## Project docs
 
-This repository is currently **documentation only**. No application code has
-been written yet. The spec set is the deliverable for week one, and it is
-designed to be handed to a human developer or an AI agent with no further
-context.
+The specs remain the product contract for the application. Read the entry
+points before changing behavior:
 
 | Start here | What it gives you |
 |---|---|
@@ -103,15 +102,25 @@ so break them deliberately or not at all.
 
 ## Running it
 
-Not yet — implementation has not started. This is the interface once the
-foundations feature lands.
+Copy `.env.example` to `.env` and replace its development placeholders. Set a
+strong, random `SESSION_SECRET`; provide five real team addresses in
+`ADMIN_EMAILS` and a private `SEED_ADMIN_PASSWORD` before running the admin
+seed command. `DEMO_SEED_PASSWORD` optionally enables the Sam and Priya demo
+accounts. Never commit `.env`.
 
 ```bash
 docker compose up --build          # full stack
 docker compose up -d db mailpit    # just infra; run apps on host for hot reload
-docker compose exec db psql -U bootcamp -d bootcamp_connect
-docker compose down -v             # reset, destroys data
+docker compose exec backend python -m app.seed
+docker compose exec db psql -U bootcamp -d bootcamp_connect -W
 ```
+
+The backend container applies Alembic migrations before serving. The seed
+command creates the five configured admin users and reference data. Frontend
+checks run with `cd frontend && npm test` and `npm run build`; backend unit
+tests run with `cd backend && python -m pytest`. The Playwright demo path runs
+with `cd frontend && npm run e2e` against the running stack; it needs seeded
+reference data and Chromium (`npx playwright install chromium`).
 
 | Service | URL |
 |---|---|
@@ -122,7 +131,8 @@ docker compose down -v             # reset, destroys data
 | Postgres | localhost:5432 |
 
 Mailpit is a local fake mail server — no real email is ever sent. Magic links
-land in the web inbox.
+land in the web inbox. `docker compose down` stops services while preserving
+the database volume; `docker compose down -v` destroys all local database data.
 
 ## Working on it
 
@@ -151,10 +161,10 @@ feat/04-matching
 ├── roadmap.md           what to build, in what order
 ├── specs/               one doc per feature, plus deferred_*.md
 ├── decisions/           numbered ADRs
-├── backend/             FastAPI + SQLAlchemy + Alembic   (not yet created)
-├── frontend/            Vite + React + TypeScript        (not yet created)
-├── e2e/                 Playwright                        (not yet created)
-└── docker-compose.yml                                   (not yet created)
+├── backend/             FastAPI + SQLAlchemy + Alembic
+├── frontend/            Vite + React + TypeScript
+│   └── e2e/              Playwright browser demo-path coverage
+└── docker-compose.yml
 ```
 
 ## Decisions worth knowing about

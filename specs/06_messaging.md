@@ -6,7 +6,7 @@ is the payoff of the whole loop and the part most likely to break live.
 **Depends on:** [05 — Connection requests](05_connection_requests.md)
 **Blocks:** [07 — Notifications](07_notifications.md)
 
-**Implementation status:** Not started.
+**Implementation status:** In progress.
 
 ---
 

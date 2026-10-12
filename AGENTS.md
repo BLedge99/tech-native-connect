@@ -12,9 +12,11 @@ developers who are studying alongside them on the same bootcamp.
 - **Repo:** https://github.com/BLedge99/tech-native-connect
 - **Demo deadline:** 15 October 2026
 - **Team:** Ben, Joey, James, Alys, Mick
-- **Current phase:** specification complete, implementation not started
+- **Current phase:** required demo features implemented; full-stack verification in progress
 
-This repo currently contains documentation only. Code has not been written yet.
+The repository contains the application and its specifications. Backend domain
+APIs, the React demo, migrations, and unit tests are in place. Real-Postgres
+integration and browser E2E verification remain part of the finish line.
 
 ---
 
@@ -62,7 +64,7 @@ change the stack.
     ├── 0001-*.md ... 0012-*.md
 ```
 
-### Target code layout (to be created)
+### Application layout
 
 ```
 backend/
@@ -141,7 +143,7 @@ probe, so break them deliberately or not at all.
 ```bash
 docker compose up --build     # full stack
 docker compose up -d db mailpit   # just infra, run apps on host for fast reload
-docker compose exec db psql -U bootcamp -d bootcamp_connect
+docker compose exec db psql -U bootcamp -d bootcamp_connect -W
 docker compose down -v        # reset, destroys data
 ```
 

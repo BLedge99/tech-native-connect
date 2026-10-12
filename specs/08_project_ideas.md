@@ -9,7 +9,7 @@ connections.
 [07 — Notifications](07_notifications.md)
 **Blocks:** nothing.
 
-**Implementation status:** Not started.
+**Implementation status:** In progress.
 
 ---
 

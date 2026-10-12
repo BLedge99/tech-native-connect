@@ -7,7 +7,7 @@ how many unread things they have.
 [06 — Messaging](06_messaging.md)
 **Blocks:** nothing. This is triggered by 05 and 06.
 
-**Implementation status:** Not started.
+**Implementation status:** In progress.
 
 ---
 

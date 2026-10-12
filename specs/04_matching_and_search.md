@@ -8,7 +8,7 @@ without explanations is a list nobody trusts.
 **Blocks:** [05 — Connection requests](05_connection_requests.md),
 [01 — Home feed](01_landing_page.md)
 
-**Implementation status:** Not started.
+**Implementation status:** In progress.
 
 ---
 
