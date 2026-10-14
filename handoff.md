@@ -4,11 +4,25 @@
 **Deadline:** demo 15 October (tomorrow)
 **Written for:** whoever picks this up next — human or AI agent
 **Docs status:** specs reconciled with code 2 Oct. `c4c7a00`.
-**Branch:** `web-deploy` — free-tier Render deployment workstream, partially
-uncommitted. **§18 is where to pick up.**
+**Branch:** `web-deploy` — free-tier Render deployment workstream, pushed to
+origin. **§18 is where to pick up.**
 
 Read [`AGENTS.md`](AGENTS.md) first. This file covers only **what state the
 code is actually in**, which is not derivable from the specs.
+
+> **⚠ HOW TO RUN THIS PROJECT — read this before any command.**
+>
+> Everything runs in Docker. Docker, Node and Python live **inside the
+> containers or inside WSL** — they are not on the Windows host and must not
+> be installed, uninstalled, or "repaired" there. Previous agents have caused
+> serious damage by not noticing Docker runs through the WSL backend and
+> trying to "fix" a non-existent host environment. If `docker info` fails in
+> PowerShell, that is expected — use `./run.bat`, which detects WSL
+> automatically. Never run `pytest`, `npx`, `node` or `python` on the Windows
+> host; all tests run via `docker compose exec`. After editing frontend
+> source, `docker compose restart frontend` (Vite HMR is unreliable here).
+> Full instructions: [`AGENTS.md`](AGENTS.md) §6 and
+> [`docs/deploy.md`](docs/deploy.md).
 
 ---
 
@@ -30,9 +44,15 @@ the endpoint's HTTP 200 response, then the full backend suite passed. The
 frontend component run emits React Router future-flag and React `act(...)`
 warnings; these are non-failing cleanup opportunities.
 
-**Nothing has been re-run since 11 Oct.** Docker was unavailable on the
-Windows host (§17). The numbers above are the last known good run; every
-§18 change is unverified.
+**Last verified run: `ben-test` branch, 14 Oct ~14:40** — all four suites
+green (298 backend, 39 component, clean tsc, 19 E2E), run through WSL.
+
+**The `web-deploy` branch has NOT been tested.** The deployment workstream
+(§18) is committed and pushed but no suite has run against it. Note on
+Docker: it has never run natively on the Windows host — it always runs
+through the WSL layer, via `./run.bat` (which auto-detects `wsl docker`) or
+`wsl docker` directly. "Docker is unavailable on Windows" is never a valid
+excuse to change the host environment; it means use `run.bat`.
 
 ---
 
@@ -344,12 +364,12 @@ section citing it: `specs/02` §13.1–13.2, `specs/05` §11.1, `specs/06` §10.
 
 | Missing | Where | Priority |
 |---|---|---|
-| Run all four suites against the §18 changes | §19.5 | **High** — nothing verified since 11 Oct |
-| Commit the web-deploy workstream | §18 | **High** — 6 modified + 6 untracked files, all uncommitted |
-| Write `docs/deploy.md` | §19.1 | **High** — `Dockerfile:2` and `render.yaml:4` both reference it |
-| Write ADR 0013 for `DEMO_EXPOSE_MAGIC_LINKS` | §19.2 | **High** — `render.yaml:37` cites it; decisions stop at 0012 |
-| Add `DEMO_EXPOSE_MAGIC_LINKS` to `.env.example` | §19.3 | Medium — defaults off, so nothing breaks |
-| Decide fate of `zz-deploy-check.spec.ts` | §19.4 | Medium — header says "Not for commit" |
+| Run all four suites against the §18 changes | §19.5 | **High** — last verified run was `ben-test` ~14:40; web-deploy untested |
+| Commit the documentation-phase edits | §19 | **High** — docs/deploy.md, ADR 0013, `.env.example`, helpers.ts, playwright.config.ts, AGENTS.md §6 all uncommitted |
+| ~~Write `docs/deploy.md`~~ | §19.1 | ✅ Written 14 Oct |
+| ~~Write ADR 0013 for `DEMO_EXPOSE_MAGIC_LINKS`~~ | §19.2 | ✅ Written 14 Oct |
+| ~~Add `DEMO_EXPOSE_MAGIC_LINKS` to `.env.example`~~ | §19.3 | ✅ Done 14 Oct |
+| ~~Decide fate of `zz-deploy-check.spec.ts`~~ | §19.4 | ✅ Race fixed in helpers.ts; spec kept as manual deploy check, excluded from default suite |
 | ~~Fix the live-chat flake~~ | §5.1 | ✅ Root cause found and fixed 2 Oct — the timeout was too low, not a socket race |
 | ~~Update spec Implementation status + roadmap checkboxes~~ | §5.2 | ✅ Done 2 Oct |
 | ~~Magic link 500, mark-all-read 422, stale badge, vanishing message~~ | §3b | ✅ All four fixed 2 Oct, with regression tests |
@@ -813,23 +833,24 @@ Work started from `ben-branch` at `da053b3` and was moved to a separate
 ## 18. Web deployment workstream — 14 October 2026
 
 Goal: a free-tier Render deployment of the full stack — one Docker image,
-one origin, no mail provider. Two commits deep past §17
-(`225828a` security hardening, `934c2f9` relaxed auth limits + vite config
-cleanup); **most of the work is still uncommitted in the working tree.**
+one origin, no mail provider. Committed as `3c47d4f` and pushed to origin.
+**Nothing has been run against it.**
 
 ### What is in the tree
 
-| Piece | File(s) | State |
-|---|---|---|
-| FastAPI serves the built SPA from `static/` — single-origin production | `backend/app/main.py` | **uncommitted** |
-| Traversal-safe static resolution, SPA fallback, cache + security headers | `main.py` | **uncommitted** |
-| Unit tests for that resolution, incl. `../secret/id_rsa` | `backend/tests/unit/test_static_serving.py` | untracked |
-| `DEMO_EXPOSE_MAGIC_LINKS` — magic link in the API response when there is no mail provider | `config.py`, `routers/auth.py`, `api/client.ts`, `AuthPages.tsx`, 2 integration tests | **uncommitted** |
-| Multi-stage `Dockerfile` (node:22-slim → python:3.12-slim); alembic + seed run in `CMD` | `Dockerfile` | untracked |
-| Render Blueprint — free tier, Neon DB, single worker, `DEMO_EXPOSE_MAGIC_LINKS=1` | `render.yaml` | untracked |
-| Keepalive workflow — pings `/api/v1/health` every 14 min | `.github/workflows/keepalive.yml` | untracked |
-| Build-context exclusions | `.dockerignore` | untracked |
-| Deploy verification spec (request → accept → live message) | `frontend/tests/zz-deploy-check.spec.ts` | untracked, marked "Not for commit" |
+| Piece | File(s) |
+|---|---|
+| FastAPI serves the built SPA from `static/` — single-origin production | `backend/app/main.py` |
+| Traversal-safe static resolution, SPA fallback, cache + security headers | `main.py` |
+| Unit tests for that resolution, incl. `../secret/id_rsa` | `backend/tests/unit/test_static_serving.py` |
+| `DEMO_EXPOSE_MAGIC_LINKS` — magic link in the API response when there is no mail provider | `config.py`, `routers/auth.py`, `api/client.ts`, `AuthPages.tsx`, 2 integration tests |
+| Multi-stage `Dockerfile` (node:22-slim → python:3.12-slim); alembic + seed run in `CMD` | `Dockerfile` |
+| Render Blueprint — free tier, Neon DB, single worker, `DEMO_EXPOSE_MAGIC_LINKS=1` | `render.yaml` |
+| Keepalive workflow — pings `/api/v1/health` every 14 min | `.github/workflows/keepalive.yml` |
+| Build-context exclusions | `.dockerignore` |
+| Deploy verification spec (excluded from default suite, run manually post-deploy) | `frontend/tests/zz-deploy-check.spec.ts` |
+| Deployment guide | `docs/deploy.md` |
+| ADR for the magic-link tradeoff | `decisions/0013-demo-expose-magic-links.md` |
 
 ### The design
 
@@ -859,28 +880,34 @@ cleanup); **most of the work is still uncommitted in the working tree.**
 
 ## 19. Gaps in the deployment workstream — read before doing anything
 
-Ordered. Items 1–3 are documentation debt that committed files already
-promise; items 4–6 are the path to a deployable branch.
+Updated 14 Oct after the documentation phase. Items 1–3 are now closed.
 
-1. **`docs/deploy.md` does not exist.** Both `Dockerfile:2` and
-   `render.yaml:4` reference it for the click-through. Either write it or
-   delete the references. The material is §18 above.
-2. **ADR 0013 does not exist.** `render.yaml:37` cites it for
-   `DEMO_EXPOSE_MAGIC_LINKS`. `decisions/` stops at `0012`. Either write
-   the ADR (the tradeoff is documented inline at all three layers — this is
-   the write-up) or fix the reference to point at the code comments.
-3. **`.env.example` does not list `DEMO_EXPOSE_MAGIC_LINKS`.** It defaults
-   to off, so nothing breaks, but a new operator cannot discover it.
-4. **`frontend/tests/zz-deploy-check.spec.ts` is marked "Not for commit".**
-   Decide: fold its wait-for-PATCH acknowledgement into `tests/helpers.ts`
-   and keep it, or delete it. Its header explains a real race —
-   `gotoSettled`'s `/matching is unlocked/i` matcher also matches the
-   profile form's live preview, so it can leave the page while the save is
-   still in flight. If the race is real, the helper is the fix, not the spec.
-5. **Nothing has been run since 11 Oct.** No suite has executed against the
-   §18 changes — not the new unit tests, not the auth changes, not a build.
-   Docker was unavailable on the Windows host. **Do not deploy until the
-   §13.3 verification gate passes** (all four suites + logs scan +
-   `check-no-mocking.mjs`).
-6. **Nothing is committed.** `git status` shows 6 modified + 6 untracked
-   files. The workstream does not survive a machine loss without a commit.
+1. ~~**`docs/deploy.md` does not exist.**~~ ✅ Written. Covers both stacks
+   (dev compose vs production image), `./run.bat`, the four test suites,
+   Neon + Render setup, the `RENDER_URL` repo variable, the post-deploy
+   smoke test, and a troubleshooting table.
+2. ~~**ADR 0013 does not exist.**~~ ✅ Written as
+   `decisions/0013-demo-expose-magic-links.md`. Records the enumeration
+   tradeoff and the four rejected alternatives.
+3. ~~**`.env.example` does not list `DEMO_EXPOSE_MAGIC_LINKS`.**~~ ✅ Added,
+   default `false`, cross-referenced to the ADR.
+4. ~~**`zz-deploy-check.spec.ts` is marked "Not for commit".**~~ ✅ Resolved.
+   The race it documented (`completeProfile` asserting `/matching is
+   unlocked/i`, which the form's live preview also matches) is real and is
+   now fixed in the helper itself: `frontend/tests/helpers.ts`
+   `completeProfile()` waits for the `PATCH /users/me` response and asserts
+   `200` before checking the confirmation text. The spec is kept as the
+   manual deploy smoke test, excluded from the default suite via
+   `testIgnore` in `playwright.config.ts`, with its header updated.
+5. **Nothing has been run against the §18 changes.** The last verified run
+   was `ben-test` at ~14:40 on 14 Oct — all green, but that predates the
+   deployment workstream. **Do not deploy until the §13.3 verification gate
+   passes** (all four suites + logs scan + `check-no-mocking.mjs`). The
+   `helpers.ts` change in item 4 is also unverified — it is strictly additive
+   (waits for a response that must succeed anyway) but the next E2E run is
+   the first time it executes. Reminder: Docker always runs through WSL on
+   this machine — use `./run.bat` or `wsl docker` directly.
+6. ~~**Nothing is committed.**~~ ✅ Committed as `3c47d4f` and pushed to
+   `origin/web-deploy`. The documentation-phase edits (docs/deploy.md, ADR
+   0013, `.env.example`, `helpers.ts`, `playwright.config.ts`,
+   `zz-deploy-check.spec.ts`, this handoff, `AGENTS.md` §6) are uncommitted.

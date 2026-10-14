@@ -26,6 +26,9 @@ set "CMD=%1"
 if "%CMD%"=="" set "CMD=dev"
 
 if "%CMD%"=="dev" goto dev
+if "%CMD%"=="tunnel" goto tunnel
+if "%CMD%"=="cloudflare" goto tunnel
+if "%CMD%"=="url" goto url
 if "%CMD%"=="build" goto build
 if "%CMD%"=="down" goto down
 if "%CMD%"=="logs" goto logs
@@ -35,6 +38,17 @@ goto help
 
 :dev
 %DOCKER_CMD% compose up --build
+goto end
+
+:tunnel
+%DOCKER_CMD% compose up -d --build
+echo.
+echo [run.bat] Waiting for Cloudflare Tunnel to establish...
+powershell -NoProfile -Command "$found = $false; for ($i=0; $i -lt 30; $i++) { $logs = (%DOCKER_CMD% compose logs tunnel 2>&1 | Out-String); if ($logs -match 'https://[a-zA-Z0-9-]+\.trycloudflare\.com') { Write-Host ''; Write-Host '===================================================' -ForegroundColor Green; Write-Host '  Cloudflare Tunnel is LIVE! Open to web traffic:  ' -ForegroundColor Green; Write-Host ('  ' + $matches[0]) -ForegroundColor Cyan; Write-Host '===================================================' -ForegroundColor Green; Write-Host ''; $found = $true; break }; Start-Sleep -Seconds 1 }; if (-not $found) { Write-Host '[run.bat] Tunnel container started. Check URL with: %DOCKER_CMD% compose logs tunnel' -ForegroundColor Yellow }"
+goto end
+
+:url
+powershell -NoProfile -Command "$logs = (%DOCKER_CMD% compose logs tunnel 2>&1 | Out-String); if ($logs -match 'https://[a-zA-Z0-9-]+\.trycloudflare\.com') { Write-Host $matches[0] -ForegroundColor Cyan } else { Write-Host 'No active tunnel URL found. Run: %DOCKER_CMD% compose logs tunnel' -ForegroundColor Yellow }"
 goto end
 
 :panel
@@ -58,8 +72,10 @@ goto end
 goto end
 
 :help
-echo Usage: run.bat [dev^|build^|down^|logs^|clean^|panel]
+echo Usage: run.bat [dev^|tunnel^|url^|build^|down^|logs^|clean^|panel]
 echo   dev    - Build and start all services (default)
+echo   tunnel - Start stack in background and display live Cloudflare URL
+echo   url    - Display the active Cloudflare Tunnel URL
 echo   build  - Build images only
 echo   down   - Stop services
 echo   logs   - Follow logs

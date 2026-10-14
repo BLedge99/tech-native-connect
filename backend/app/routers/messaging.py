@@ -150,6 +150,26 @@ async def unread_count(
 ws_router = APIRouter()
 
 
+from urllib.parse import urlsplit
+
+
+def is_allowed_origin(origin: str, allowed_origins: list[str]) -> bool:
+    if "*" in allowed_origins or origin in allowed_origins:
+        return True
+    try:
+        hostname = (urlsplit(origin).hostname or "").lower()
+        if hostname.endswith(".trycloudflare.com"):
+            return True
+        for allowed in allowed_origins:
+            if allowed.startswith("*.") and hostname.endswith(allowed[1:].lower()):
+                return True
+            if allowed.startswith("https://*.") and hostname.endswith(allowed[len("https://*."):].lower()):
+                return True
+    except Exception:
+        return False
+    return False
+
+
 @ws_router.websocket("/api/v1/ws")
 async def websocket_endpoint(websocket: WebSocket) -> None:
     """Session cookie authenticates the handshake. No token in the query
@@ -159,7 +179,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
     # unrelated change to SameSite makes it exploitable. Closing before
     # `accept()` answers the handshake with an HTTP 403.
     origin = websocket.headers.get("origin")
-    if origin is not None and origin not in set(get_settings().cors_origin_list):
+    if origin is not None and not is_allowed_origin(origin, get_settings().cors_origin_list):
         await websocket.close(code=1008)
         return
 

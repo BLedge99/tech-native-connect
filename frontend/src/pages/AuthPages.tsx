@@ -199,8 +199,11 @@ export function MagicLinkPage() {
               <p className="font-semibold">
                 Demo mode: email delivery is disabled, so the link is here.
               </p>
-              <a href={demoLink} className="block break-all underline">
-                {demoLink}
+              <a
+                href={demoLink.replace(/^https?:\/\/[^/]+/, window.location.origin)}
+                className="block break-all underline"
+              >
+                {demoLink.replace(/^https?:\/\/[^/]+/, window.location.origin)}
               </a>
             </div>
           ) : (

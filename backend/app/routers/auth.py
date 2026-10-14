@@ -154,9 +154,9 @@ async def magic_link_verify(token: str, db: AsyncSession = Depends(get_db)):
     session_token, _session = await auth_svc.create_session(db, user)
     await db.commit()
 
-    # 302 back into the APP, not back into the API. The cookie is set on the
-    # redirect response, and cookies ignore the port, so it travels.
-    response = RedirectResponse(url=f"{get_settings().app_url}/", status_code=302)
+    # 302 back into the APP. A relative redirect preserves the request's origin
+    # (whether localhost or Cloudflare tunnel), and sets the cookie on that origin.
+    response = RedirectResponse(url="/", status_code=302)
     set_session_cookie(response, session_token)
     return response
 

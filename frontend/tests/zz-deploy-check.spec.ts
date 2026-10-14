@@ -1,8 +1,10 @@
-/** Temporary deploy verification. Not for commit. Mirrors
- *  demo.spec.ts "request → accept → message" but waits for the PATCH
- *  acknowledgement — tests/helpers.ts asserts /matching is unlocked/i, which
- *  the form's live preview also matches, so it can leave the page while the
- *  save is still in flight. */
+/** Manual deploy verification. Excluded from the default suite
+ *  (playwright.config.ts testIgnore) — run it after a deploy:
+ *    docker compose exec -T frontend npx playwright test zz-deploy-check
+ *  Mirrors demo.spec.ts "request → accept → message" but waits for the
+ *  PATCH acknowledgement. The race it was written to catch is now fixed in
+ *  helpers.ts completeProfile(); this spec remains the end-to-end deploy
+ *  smoke test. */
 import { expect, test, type Page } from '@playwright/test'
 import { gotoSettled, register, uniqueName } from './helpers'
 

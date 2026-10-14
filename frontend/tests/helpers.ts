@@ -113,8 +113,16 @@ export async function completeProfile(
   await page.getByPlaceholder('Search skills…').fill(skill)
   await page.getByRole('checkbox', { name: skill }).first().check()
 
+  // Wait for the PATCH to land, not for the confirmation text. The form's live
+  // preview also matches /matching is unlocked/i, so asserting on the text
+  // alone can pass while the save is still in flight — the next goto() then
+  // races the write and can leave the profile half-saved.
+  const saved = page.waitForResponse(
+    (r) => r.url().includes('/api/v1/users/me') && r.request().method() === 'PATCH',
+  )
   await page.getByRole('button', { name: 'Save profile' }).click()
-  await expect(page.getByText(/matching is unlocked/i)).toBeVisible()
+  expect((await saved).status()).toBe(200)
+  await expect(page.getByText(/^Saved\./)).toBeVisible()
 
   // Return to the feed, which is where the gate's effect is visible. A user
   // does this; a test that stays on the form proves nothing about the feed.

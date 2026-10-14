@@ -22,6 +22,7 @@ export default defineConfig({
   server: {
     host: '0.0.0.0',
     port: 5173,
+    allowedHosts: true,
     headers: {
       ...securityHeaders,
       'Content-Security-Policy': contentSecurityPolicy("'self' 'unsafe-inline'", "'self' 'unsafe-inline'"),
