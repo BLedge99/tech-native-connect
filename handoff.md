@@ -1,9 +1,11 @@
 # Handoff
 
-**Date:** 2 October 2026
-**Deadline:** demo 15 October
+**Date:** 14 October 2026
+**Deadline:** demo 15 October (tomorrow)
 **Written for:** whoever picks this up next — human or AI agent
 **Docs status:** specs reconciled with code 2 Oct. `c4c7a00`.
+**Branch:** `web-deploy` — free-tier Render deployment workstream, partially
+uncommitted. **§18 is where to pick up.**
 
 Read [`AGENTS.md`](AGENTS.md) first. This file covers only **what state the
 code is actually in**, which is not derivable from the specs.
@@ -27,6 +29,10 @@ changed to page envelopes; those tests were updated to read `items` and expect
 the endpoint's HTTP 200 response, then the full backend suite passed. The
 frontend component run emits React Router future-flag and React `act(...)`
 warnings; these are non-failing cleanup opportunities.
+
+**Nothing has been re-run since 11 Oct.** Docker was unavailable on the
+Windows host (§17). The numbers above are the last known good run; every
+§18 change is unverified.
 
 ---
 
@@ -338,6 +344,12 @@ section citing it: `specs/02` §13.1–13.2, `specs/05` §11.1, `specs/06` §10.
 
 | Missing | Where | Priority |
 |---|---|---|
+| Run all four suites against the §18 changes | §19.5 | **High** — nothing verified since 11 Oct |
+| Commit the web-deploy workstream | §18 | **High** — 6 modified + 6 untracked files, all uncommitted |
+| Write `docs/deploy.md` | §19.1 | **High** — `Dockerfile:2` and `render.yaml:4` both reference it |
+| Write ADR 0013 for `DEMO_EXPOSE_MAGIC_LINKS` | §19.2 | **High** — `render.yaml:37` cites it; decisions stop at 0012 |
+| Add `DEMO_EXPOSE_MAGIC_LINKS` to `.env.example` | §19.3 | Medium — defaults off, so nothing breaks |
+| Decide fate of `zz-deploy-check.spec.ts` | §19.4 | Medium — header says "Not for commit" |
 | ~~Fix the live-chat flake~~ | §5.1 | ✅ Root cause found and fixed 2 Oct — the timeout was too low, not a socket race |
 | ~~Update spec Implementation status + roadmap checkboxes~~ | §5.2 | ✅ Done 2 Oct |
 | ~~Magic link 500, mark-all-read 422, stale badge, vanishing message~~ | §3b | ✅ All four fixed 2 Oct, with regression tests |
@@ -795,3 +807,80 @@ Work started from `ben-branch` at `da053b3` and was moved to a separate
 - Editor diagnostics reported no problems in changed source/test files and
   `git diff --check` passed. These checks do not replace backend integration
   tests or browser validation.
+
+---
+
+## 18. Web deployment workstream — 14 October 2026
+
+Goal: a free-tier Render deployment of the full stack — one Docker image,
+one origin, no mail provider. Two commits deep past §17
+(`225828a` security hardening, `934c2f9` relaxed auth limits + vite config
+cleanup); **most of the work is still uncommitted in the working tree.**
+
+### What is in the tree
+
+| Piece | File(s) | State |
+|---|---|---|
+| FastAPI serves the built SPA from `static/` — single-origin production | `backend/app/main.py` | **uncommitted** |
+| Traversal-safe static resolution, SPA fallback, cache + security headers | `main.py` | **uncommitted** |
+| Unit tests for that resolution, incl. `../secret/id_rsa` | `backend/tests/unit/test_static_serving.py` | untracked |
+| `DEMO_EXPOSE_MAGIC_LINKS` — magic link in the API response when there is no mail provider | `config.py`, `routers/auth.py`, `api/client.ts`, `AuthPages.tsx`, 2 integration tests | **uncommitted** |
+| Multi-stage `Dockerfile` (node:22-slim → python:3.12-slim); alembic + seed run in `CMD` | `Dockerfile` | untracked |
+| Render Blueprint — free tier, Neon DB, single worker, `DEMO_EXPOSE_MAGIC_LINKS=1` | `render.yaml` | untracked |
+| Keepalive workflow — pings `/api/v1/health` every 14 min | `.github/workflows/keepalive.yml` | untracked |
+| Build-context exclusions | `.dockerignore` | untracked |
+| Deploy verification spec (request → accept → live message) | `frontend/tests/zz-deploy-check.spec.ts` | untracked, marked "Not for commit" |
+
+### The design
+
+- **One origin.** The image contains the built SPA and FastAPI serves it —
+  no CORS, no cookie domain, no Vite proxy in production. The catch-all
+  `api_route` is registered *last* so every router wins; unknown `/api/*`
+  paths still get a JSON 404, not the SPA shell.
+- **Traversal safety is the entire point of `resolve_static_file`.** The
+  path arrives from the URL. `candidate.is_relative_to(root.resolve())`
+  is the whole security model; four unit tests pin it. Do not "simplify"
+  that function.
+- **Migrations + seed run in the container `CMD`**, not a Render
+  pre-deploy hook: one instance means no deploy race, and the app never
+  serves traffic against an unmigrated schema.
+- **`demo_expose_magic_links` is opt-in and documented as an enumeration
+  tradeoff.** Off by default — the always-202 contract keeps hiding which
+  emails have accounts. On, only real accounts get a `demo_link` in the
+  response; the sign-in page renders it inline. This is the one place the
+  app deliberately gives up an API guarantee, and it is commented as such at
+  all three layers (config, route, page). The two integration tests pin
+  both directions.
+- **Keepalive exists because the Render free tier sleeps after 15 min
+  idle.** `/robots.txt` is answered by Render itself while asleep, so the
+  workflow pings `/api/v1/health` — a path that actually reaches the app.
+
+---
+
+## 19. Gaps in the deployment workstream — read before doing anything
+
+Ordered. Items 1–3 are documentation debt that committed files already
+promise; items 4–6 are the path to a deployable branch.
+
+1. **`docs/deploy.md` does not exist.** Both `Dockerfile:2` and
+   `render.yaml:4` reference it for the click-through. Either write it or
+   delete the references. The material is §18 above.
+2. **ADR 0013 does not exist.** `render.yaml:37` cites it for
+   `DEMO_EXPOSE_MAGIC_LINKS`. `decisions/` stops at `0012`. Either write
+   the ADR (the tradeoff is documented inline at all three layers — this is
+   the write-up) or fix the reference to point at the code comments.
+3. **`.env.example` does not list `DEMO_EXPOSE_MAGIC_LINKS`.** It defaults
+   to off, so nothing breaks, but a new operator cannot discover it.
+4. **`frontend/tests/zz-deploy-check.spec.ts` is marked "Not for commit".**
+   Decide: fold its wait-for-PATCH acknowledgement into `tests/helpers.ts`
+   and keep it, or delete it. Its header explains a real race —
+   `gotoSettled`'s `/matching is unlocked/i` matcher also matches the
+   profile form's live preview, so it can leave the page while the save is
+   still in flight. If the race is real, the helper is the fix, not the spec.
+5. **Nothing has been run since 11 Oct.** No suite has executed against the
+   §18 changes — not the new unit tests, not the auth changes, not a build.
+   Docker was unavailable on the Windows host. **Do not deploy until the
+   §13.3 verification gate passes** (all four suites + logs scan +
+   `check-no-mocking.mjs`).
+6. **Nothing is committed.** `git status` shows 6 modified + 6 untracked
+   files. The workstream does not survive a machine loss without a commit.

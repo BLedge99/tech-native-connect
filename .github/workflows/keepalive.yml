@@ -1,0 +1,18 @@
+# A free Render web service sleeps after 15 minutes without inbound traffic and
+# takes about a minute to wake. A marker clicking the link after lunch would sit
+# through that. One request every 14 minutes resets the timer.
+#
+# The path matters: Render answers /robots.txt itself while the service is
+# asleep, so that request never reaches the app and never wakes anything.
+name: keepalive
+
+on:
+  schedule:
+    - cron: "*/14 * * * *"
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - run: curl -fsS --max-time 30 "${{ vars.RENDER_URL }}/api/v1/health"

@@ -1,0 +1,39 @@
+# Render Blueprint. Apply it from the Render dashboard: New → Blueprint →
+# select this repository and the web-deploy branch.
+#
+#   docs/deploy.md has the click-through. Everything here is the free tier.
+#   Two things to change if your setup differs: the service `name` and the two
+#   URLs below, which must match it (the WebSocket handshake checks the request
+#   origin against CORS_ORIGINS, and APP_URL mints the sign-in link).
+services:
+  - type: web
+    name: bootcamp-connect
+    runtime: docker
+    plan: free
+    region: frankfurt
+    repo: https://github.com/BLedge99/tech-native-connect
+    branch: web-deploy
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /api/v1/health
+    # Single worker. Not a preference: the WebSocket connection registry in
+    # app/realtime.py is per-process, and decisions/0005 says why.
+    dockerCommand: >-
+      sh -c "alembic upgrade head && python -m app.seed &&
+      exec uvicorn app.main:app --host 0.0.0.0 --port $PORT --workers 1"
+    envVars:
+      # Neon, pooled connection string. Prompted for on creation, never in git.
+      - key: DATABASE_URL
+        sync: false
+      - key: SEED_ADMIN_PASSWORD
+        sync: false
+      - key: APP_ENV
+        value: production
+      - key: APP_URL
+        value: https://bootcamp-connect.onrender.com
+      - key: CORS_ORIGINS
+        value: https://bootcamp-connect.onrender.com
+      # No mail provider on a free deployment, so the sign-in link is returned
+      # in the response and rendered by the page. See ADR 0013.
+      - key: DEMO_EXPOSE_MAGIC_LINKS
+        value: "1"

@@ -1,0 +1,19 @@
+# Build context. frontend/node_modules alone is 116 MB and videos/ is 11 MB;
+# sending either to a builder is pure waste.
+.git
+.github
+.gitignore
+**/.env
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+frontend/node_modules
+frontend/dist
+frontend/test-results
+frontend/videos-raw
+backend/tests
+backend/videos
+videos
+docs
+*.md
+*.pdf

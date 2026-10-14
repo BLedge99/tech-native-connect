@@ -413,6 +413,29 @@ async def test_magic_link_for_a_real_account_returns_202(auth, client):
     assert response.json()["message"]
 
 
+async def test_magic_link_is_never_returned_in_the_body_by_default(auth, client):
+    """A free deployment has no mail provider. The link comes back in the body
+    only when an operator explicitly asks for it, because doing so by default
+    would undo the enumeration guarantee the test above protects."""
+    user = await auth(display_name="Link Recipient")
+    response = await client.post("/api/v1/auth/magic-link", json={"email": user["email"]})
+    assert "demo_link" not in response.json()
+
+
+async def test_demo_mode_returns_the_link_for_a_real_account(auth, client, monkeypatch):
+    """Demo mode (DEMO_EXPOSE_MAGIC_LINKS) exists so a deployment with no mail
+    provider is still usable. It knowingly gives up the enumeration guarantee:
+    an address with an account gets a link, one without does not."""
+    from app.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "demo_expose_magic_links", True)
+    user = await auth(display_name="Link Recipient")
+    known = await client.post("/api/v1/auth/magic-link", json={"email": user["email"]})
+    unknown = await client.post("/api/v1/auth/magic-link", json={"email": "nobody@example.com"})
+    assert known.json()["demo_link"].startswith("http")
+    assert "demo_link" not in unknown.json()
+
+
 async def test_magic_link_can_only_be_consumed_once_concurrently(auth, db):
     """Two independent DB transactions racing on one token must yield one session."""
     from sqlalchemy.ext.asyncio import async_sessionmaker

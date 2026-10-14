@@ -42,6 +42,13 @@ class Settings(BaseSettings):
 
     seed_admin_password: str = ""
 
+    # Demo deployments have no mail provider, so the magic link cannot be
+    # delivered. This returns it in the API response instead, and the sign-in
+    # page renders it inline. Off everywhere by default: with it on, the
+    # always-202 contract (auth.py) stops hiding which emails have accounts.
+    # Real deployments set a mail provider and leave this false.
+    demo_expose_magic_links: bool = False
+
     @property
     def is_development(self) -> bool:
         return self.app_env == "development"

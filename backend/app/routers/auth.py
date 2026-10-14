@@ -123,15 +123,17 @@ async def magic_link(payload: MagicLinkRequest, db: AsyncSession = Depends(get_d
         window_seconds=60,
     )
     user = await auth_svc.get_user_by_email(db, payload.email)
+    body = {"message": "If that address has an account, a sign-in link is on its way."}
     if user is not None and user.is_active:
         token = await auth_svc.issue_magic_link(db, user)
         link = auth_svc.magic_link_url(token, settings.app_url)
         await send_magic_link(user.email, link)
         await db.commit()
-    return _json(
-        {"message": "If that address has an account, a sign-in link is on its way."},
-        status=202,
-    )
+        # Only in demo mode, and only for an account that exists — which is
+        # exactly the enumeration this endpoint otherwise refuses to do.
+        if settings.demo_expose_magic_links:
+            body["demo_link"] = link
+    return _json(body, status=202)
 
 
 @router.get("/magic-link/verify")
