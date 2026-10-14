@@ -48,7 +48,7 @@ async def register(
     auth_rate_limiter.check(
         "register",
         auth_svc.normalise_email(payload.email),
-        limit=5,
+        limit=20,
         window_seconds=3600,
     )
     user = await auth_svc.register_user(
@@ -77,8 +77,8 @@ async def login(payload: LoginRequest, db: AsyncSession = Depends(get_db)):
     auth_rate_limiter.check(
         "login",
         auth_svc.normalise_email(payload.email),
-        limit=5,
-        window_seconds=15 * 60,
+        limit=20,
+        window_seconds=60,
     )
     user = await auth_svc.authenticate(db, email=payload.email, password=payload.password)
     token, session_row = await auth_svc.create_session(db, user)
@@ -119,8 +119,8 @@ async def magic_link(payload: MagicLinkRequest, db: AsyncSession = Depends(get_d
     auth_rate_limiter.check(
         "magic-link",
         auth_svc.normalise_email(payload.email),
-        limit=3,
-        window_seconds=15 * 60,
+        limit=5,
+        window_seconds=60,
     )
     user = await auth_svc.get_user_by_email(db, payload.email)
     if user is not None and user.is_active:

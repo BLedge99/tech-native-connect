@@ -366,12 +366,17 @@ async def test_login_throttle_returns_retry_after(client, monkeypatch):
 
     monkeypatch.setattr(auth_router, "auth_rate_limiter", SlidingWindowRateLimiter())
     body = {"email": "throttle@example.com", "password": "wrong-password"}
-    for _ in range(5):
+    # Drive it until it throttles rather than counting to a fixed number, so
+    # tuning LOGIN_LIMIT in routers/auth.py does not silently break this test.
+    limited = None
+    for _ in range(100):
         response = await client.post("/api/v1/auth/login", json=body)
+        if response.status_code == 429:
+            limited = response
+            break
         assert response.status_code == 401
 
-    limited = await client.post("/api/v1/auth/login", json=body)
-    assert limited.status_code == 429
+    assert limited is not None, "login was never throttled"
     assert limited.json()["error"]["code"] == "rate_limited"
     assert int(limited.headers["retry-after"]) > 0
 

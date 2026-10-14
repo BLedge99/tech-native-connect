@@ -2,8 +2,14 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 
-const contentSecurityPolicy = (styleSource: string) =>
-  `default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self'; style-src ${styleSource}; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' ws: wss:`
+// Dev needs 'unsafe-inline' for scripts as well as styles: @vitejs/plugin-react
+// injects an inline <script type="module"> preamble into index.html
+// (injectIntoGlobalHook / $RefreshReg$). `script-src 'self'` blocks inline
+// scripts, so the refresh runtime never initialises and the page renders blank.
+// Preview serves the built bundle, which carries no preamble, so it stays
+// strict. Passing both sources in keeps the two policies from drifting.
+const contentSecurityPolicy = (styleSource: string, scriptSource = "'self'") =>
+  `default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src ${scriptSource}; style-src ${styleSource}; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' ws: wss:`
 
 const securityHeaders = {
   'X-Content-Type-Options': 'nosniff',
@@ -18,7 +24,7 @@ export default defineConfig({
     port: 5173,
     headers: {
       ...securityHeaders,
-      'Content-Security-Policy': contentSecurityPolicy("'self' 'unsafe-inline'"),
+      'Content-Security-Policy': contentSecurityPolicy("'self' 'unsafe-inline'", "'self' 'unsafe-inline'"),
     },
     // Same-origin only. The frontend must never hardcode localhost:8000 —
     // it breaks the moment someone runs on a different host.
