@@ -347,3 +347,55 @@ there may be no course, skill, or interest options to select.
 - This is a local/demo application, not a production service. Do not put
   sensitive personal information or real credentials into demo content.
 
+## View database data
+
+The application stores its data in PostgreSQL. When the local Docker Compose
+stack is running, open a terminal in the repository folder and connect with:
+
+```powershell
+docker compose exec db psql -U bootcamp -d bootcamp_connect
+```
+
+The default database username and name are `bootcamp` and `bootcamp_connect`.
+If you changed `POSTGRES_USER` or `POSTGRES_DB` in `.env`, use those values
+instead. The default Compose connection usually does not prompt for a password.
+If you add `-W` to request a password prompt, enter the value of
+`POSTGRES_PASSWORD` from your local `.env`.
+
+At the `psql` prompt, these commands are useful:
+
+```sql
+\dt
+\d users
+SELECT id, email, display_name FROM users LIMIT 20;
+\q
+```
+
+`\dt` lists tables, `\d users` shows the structure of the `users` table, the
+`SELECT` statement previews up to 20 user records, and `\q` exits `psql`.
+Replace the table and column names in the query as needed; use `\dt` to see the
+available tables. Treat queried account and profile data as private, and avoid
+copying it into logs or sharing it.
+
+## Administrator account details
+
+The example configuration lists these sample administrator email addresses:
+
+- `admin1@example.com`
+- `admin2@example.com`
+- `admin3@example.com`
+- `admin4@example.com`
+- `admin5@example.com`
+
+These are example/local-demo addresses, not the team's personal email
+addresses. In your own environment, the administrator addresses are configured
+by `ADMIN_EMAILS` and their initial password by `SEED_ADMIN_PASSWORD` in the
+private `.env` file. All administrator accounts created by one seed run use
+that configured seed password. The values in `.env.example` are placeholders,
+not login credentials.
+
+The isolated validation database was seeded with a temporary password. For
+security, the password is not recorded in this guide. If you do not know the
+current password for a seeded account, ask the person who manages the local
+demo environment to provide or reset it securely. Never share administrator
+passwords in this document, source control, or public messages.
