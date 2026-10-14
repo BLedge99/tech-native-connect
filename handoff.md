@@ -15,7 +15,7 @@ code is actually in**, which is not derivable from the specs.
 | Suite | Command | Result |
 |---|---|---|
 | Backend unit + integration | `docker compose exec -T backend pytest tests` | **240 passed** (389s) |
-| Frontend components | `docker compose exec -T frontend npx vitest run` | **26 passed** |
+| Frontend components | `docker compose exec -T frontend npx vitest run` | **39 passed** (14 Oct, temporary Windows dependency install; see §17) |
 | Frontend typecheck | `docker compose exec -T frontend npx tsc --noEmit` | clean |
 | E2E (Playwright) | `docker compose exec -T frontend npx playwright test` | **11 passed** (1.4 min) |
 | Evidence recordings (separate) | `docker compose exec -T frontend npx playwright test -c playwright.videos.config.ts` | **10 passed** (5.5 min) — see §6 |
@@ -369,7 +369,7 @@ docker compose up -d --build
 curl localhost:8000/api/v1/health          # {"status":"ok","database":"ok"}
 
 docker compose exec -T backend pytest tests               # 235 passed, ~5.5 min
-docker compose exec -T frontend npx vitest run            # 26 passed
+docker compose exec -T frontend npx vitest run            # 39 passed
 docker compose exec -T frontend npx tsc --noEmit           # clean
 docker compose exec -T frontend npx playwright test       # 11 passed
 
@@ -498,7 +498,7 @@ to the shared pagination rule. They now return the standard page envelope and
 the admin reference-data screens expose a Load more control. Added tests cover
 all three lists, malformed cursors across list families, multiple empty-thread
 pages, and concurrent magic-link consumption. Final verification passed with
-240 backend tests, 26 frontend component tests, clean TypeScript, 11 E2E tests,
+240 backend tests, 39 frontend component tests, clean TypeScript, 11 E2E tests,
 and 10 evidence recording tests. `git diff --check` also reported no whitespace
 errors. Tests were run through WSL Docker; use `wsl.exe` from Windows when the
 Docker CLI is not directly available in PowerShell.
@@ -716,3 +716,82 @@ British English narrator with synchronized burned-in subtitles. Narration
 scripts live in `scripts/create-video-narration.ps1`; rerun it after Playwright
 recordings and before `scripts/build-videos.sh`. The two-window connection and
 messaging videos each have one shared narration track.
+
+## 17. Security hardening review — 14 October 2026
+
+Work started from `ben-branch` at `da053b3` and was moved to a separate
+`ben-test` branch before commit. No commit was made on `ben-branch`.
+
+### Source changes in this branch
+
+- Auth throttling was extracted from `routers/auth.py` to
+  `services/rate_limit.py`. It uses an in-process sliding window, hashes
+  identities before storing keys, prunes stale keys, and caps tracked keys at
+  10,000.
+- Limits are per normalized email for registration (5/hour), password login
+  (5/15 minutes), and magic-link requests (3/15 minutes). Verification is
+  limited to 10 attempts per submitted token per 15 minutes. Rejections return
+  HTTP 429 with a `Retry-After` header.
+- `SecurityMiddleware` now sets a restrictive CSP on API responses. Vite
+  development responses set a frontend CSP allowing inline styles for the dev
+  toolchain; Vite preview uses a stricter policy that disallows inline styles.
+  Both include frame, object, base, form, image, font, and connection
+  directives; preview must still be exercised in a real browser to detect
+  policy violations.
+- `SESSION_SECRET` was removed from settings, Compose, `.env.example`, and
+  documentation because it had no runtime consumer. Current sessions use
+  random opaque tokens stored as hashes; this change does not add signing or
+  encryption.
+- Added unit coverage for limiter windows, scopes, and storage cap; added
+  integration assertions for rate-limit responses and the API CSP.
+- Corrected stale component-test counts in project documentation to 39.
+- Modularity review found `pages/IdeasPage.tsx` holds listing, form, and detail
+  pages, and `pages/ProfilePages.tsx` holds profile display and edit flows.
+  They were noted as possible future splits but were not refactored here.
+
+### Limitations and unresolved findings
+
+- The limiter is process-local: limits reset on application restart and are
+  not shared between instances. It has no source-IP/network bucket, so it
+  should not be treated as production-grade anti-automation or distributed
+  rate limiting. The verification bucket is keyed by submitted token; an
+  attacker can vary candidate tokens to create separate buckets (the global
+  tracked-key cap bounds memory, not guesses). Before scaling or relying on
+  these controls in production, move counters to shared storage such as Redis,
+  add a trusted-proxy-aware IP/network limit, and verify thresholds against
+  legitimate shared-network use.
+- The frontend dependency audit remains unresolved. The restored lockfile
+  contains React Router 6.30.6, `@vitest/mocker` 3.2.7, Vitest 3.2.7, and
+  Tinypool 1.1.1. `npm audit` reported 5 findings (3 moderate, 2 critical),
+  including advisories affecting React Router redirects, Vitest redirect
+  mocks, and Tinypool worker options. Dependency upgrades were attempted but
+  not retained; `package.json` and `package-lock.json` are unchanged from the
+  branch base.
+
+### Validation and environment incidents
+
+- On Windows, the first `npm test`/build attempts could not start because the
+  Rollup Windows native optional package was absent. The tests (39 passed) and
+  production build later succeeded after a temporary local dependency
+  installation, but **were not rerun after `npm ci` restored the original
+  lockfile**. Thus they do not verify the final installed dependency tree or
+  final CSP policy.
+- The user explicitly requested that Windows npm/Python environments not be
+  altered. Before that instruction, npm was run in `frontend` (including a
+  temporary no-save platform-package install and upgrade attempts). The
+  dependency manifests were restored and, after the user authorized it,
+  `npm ci` completed from the original lockfile. The final tracked changes
+  contain no package manifest or lockfile changes.
+- A Windows Python package installation was attempted before the user
+  instruction. The package-install tool reported success, but later checks
+  found no `pytest` in `c:/python312/python.exe`. A direct pip attempt failed
+  with `WinError 2` while replacing `idna.exe`. Whether that failed operation
+  changed any other global Python packages was not verified.
+- Backend tests were not run. Docker was unavailable in the PowerShell
+  environment. Attempts to start the project via `run.bat` from PowerShell
+  and `cmd.exe` returned command-parsing errors and did not start services;
+  `run.bat` itself was not modified. WSL Docker responsiveness was not
+  confirmed.
+- Editor diagnostics reported no problems in changed source/test files and
+  `git diff --check` passed. These checks do not replace backend integration
+  tests or browser validation.

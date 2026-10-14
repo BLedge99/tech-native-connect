@@ -44,6 +44,9 @@ async def test_private_api_responses_are_not_cacheable(client):
     assert response.headers["x-content-type-options"] == "nosniff"
     assert response.headers["referrer-policy"] == "strict-origin-when-cross-origin"
     assert response.headers["x-frame-options"] == "DENY"
+    assert response.headers["content-security-policy"] == (
+        "default-src 'none'; base-uri 'none'; frame-ancestors 'none'"
+    )
 
 
 def test_production_rejects_http_browser_origins():

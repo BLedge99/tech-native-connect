@@ -47,6 +47,7 @@ class SecurityMiddleware:
                         b"x-frame-options",
                         b"referrer-policy",
                         b"strict-transport-security",
+                        b"content-security-policy",
                     }
                     headers = [(key, value) for key, value in headers if key.lower() not in protected]
                     headers.extend(
@@ -55,6 +56,10 @@ class SecurityMiddleware:
                             (b"x-content-type-options", b"nosniff"),
                             (b"x-frame-options", b"DENY"),
                             (b"referrer-policy", b"strict-origin-when-cross-origin"),
+                            (
+                                b"content-security-policy",
+                                b"default-src 'none'; base-uri 'none'; frame-ancestors 'none'",
+                            ),
                         ]
                     )
                     if self.settings.app_env == "production":

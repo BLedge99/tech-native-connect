@@ -50,7 +50,6 @@ services:
     # decisions/0005-websocket-in-process.md.
     environment:
       DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://bootcamp:bootcamp@db:5432/bootcamp_connect}
-      SESSION_SECRET: ${SESSION_SECRET:-dev-only-change-me}
       APP_ENV: ${APP_ENV:-development}
       MAILPIT_SMTP_HOST: ${MAILPIT_SMTP_HOST:-mailpit}
       MAILPIT_SMTP_PORT: ${MAILPIT_SMTP_PORT:-1025}

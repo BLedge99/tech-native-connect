@@ -15,7 +15,6 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+asyncpg://bootcamp:bootcamp@db:5432/bootcamp_connect"
     test_database_url: str = "postgresql+asyncpg://bootcamp:bootcamp@db:5432/bootcamp_connect_test"
 
-    session_secret: str = "dev-only-change-me"
     session_days: int = 7
     magic_link_minutes: int = 15
 

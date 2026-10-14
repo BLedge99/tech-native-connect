@@ -360,6 +360,22 @@ async def test_unknown_email_and_wrong_password_are_identical(auth, client):
     assert wrong.text == unknown.text
 
 
+async def test_login_throttle_returns_retry_after(client, monkeypatch):
+    from app.routers import auth as auth_router
+    from app.services.rate_limit import SlidingWindowRateLimiter
+
+    monkeypatch.setattr(auth_router, "auth_rate_limiter", SlidingWindowRateLimiter())
+    body = {"email": "throttle@example.com", "password": "wrong-password"}
+    for _ in range(5):
+        response = await client.post("/api/v1/auth/login", json=body)
+        assert response.status_code == 401
+
+    limited = await client.post("/api/v1/auth/login", json=body)
+    assert limited.status_code == 429
+    assert limited.json()["error"]["code"] == "rate_limited"
+    assert int(limited.headers["retry-after"]) > 0
+
+
 async def test_email_normalisation_prevents_duplicate_accounts(client):
     first = await client.post(
         "/api/v1/auth/register",

@@ -14,7 +14,11 @@ developers who are studying alongside them on the same bootcamp.
 - **Team:** Ben, Joey, James, Alys, Mick
 - **Current phase:** all nine required features implemented, 2 October 2026
 
-**State.** 235 backend tests, 26 frontend component tests, 11 E2E tests pass.
+**Last recorded state.** The 11 Oct review run recorded 298 backend tests, 39
+frontend component tests, and 19 E2E tests passing. On 14 Oct, 39 frontend
+component tests and a production build passed after a temporary Windows
+dependency install, but they were not rerun after restoring the lockfile; see
+`handoff.md` §17.
 `tsc --noEmit` is clean. Every feature spec carries an *As built* section
 documenting its deviations; `roadmap.md` §Status summary has the totals and the
 two known gaps.
@@ -203,7 +207,6 @@ POSTGRES_USER=bootcamp
 POSTGRES_PASSWORD=bootcamp
 POSTGRES_DB=bootcamp_connect
 DATABASE_URL=postgresql+asyncpg://bootcamp:bootcamp@db:5432/bootcamp_connect
-SESSION_SECRET=change-me
 MAILPIT_SMTP_HOST=mailpit
 MAILPIT_SMTP_PORT=1025
 MAILPIT_WEB_URL=http://localhost:8025

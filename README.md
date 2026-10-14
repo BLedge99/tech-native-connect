@@ -157,7 +157,7 @@ so break them deliberately or not at all.
 
 ```powershell
 docker compose exec -T backend pytest tests                      # 240 passed
-docker compose exec -T frontend npx vitest run                   # 26 passed
+docker compose exec -T frontend npx vitest run                   # 39 passed
 docker compose exec -T frontend npx tsc --noEmit                 # clean
 docker compose exec -T frontend npx playwright test              # 11 passed
 ```
