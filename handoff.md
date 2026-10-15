@@ -911,3 +911,28 @@ Updated 14 Oct after the documentation phase. Items 1–3 are now closed.
    `origin/web-deploy`. The documentation-phase edits (docs/deploy.md, ADR
    0013, `.env.example`, `helpers.ts`, `playwright.config.ts`,
    `zz-deploy-check.spec.ts`, this handoff, `AGENTS.md` §6) are uncommitted.
+
+---
+
+## 20. Cloudflare Quick Tunnel — 15 October 2026 (`cloudflare-deploy`)
+
+Goal: the dev stack on this PC, reachable from any device at a free
+`*.trycloudflare.com` URL. Start with `.\run.bat tunnel`; see `docs/cloudflare.md`.
+
+Fixed in this pass:
+
+- **Magic links pointed at localhost.** `demo_link` was built from `APP_URL`
+  (`http://localhost:5173`), so a visitor on a phone followed it to their own
+  phone. The link is now built from the request's `Origin` when it is trusted
+  (`app/origins.py`, shared with the WebSocket origin check); untrusted origins
+  fall back to `APP_URL`. Test: `test_magic_link_points_back_at_the_tunnel_origin`.
+- **`run.bat tunnel`/`url` could print a dead URL.** They took the first
+  `trycloudflare.com` match in the logs (stale after a restart, or
+  `api.trycloudflare.com` from an error line). Now `scripts/tunnel-url.ps1`
+  takes the last real one, and `tunnel` is force-recreated so its log is fresh.
+- Brought over from `demo-branch.patch`: `frontend/tests/db.ts` (the regression
+  spec imports it and would not load without it), `scripts/check-no-mocking.mjs`,
+  Playwright system libraries in `frontend/Dockerfile`, README test-DB note.
+
+Not verified in CI: the session that made these edits could not reach Docker
+Hub, PyPI or npm, so suites were not run there. Run the §13.3 gate locally.

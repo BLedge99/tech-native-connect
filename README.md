@@ -160,6 +160,14 @@ so break them deliberately or not at all.
 
 ## Tests
 
+The backend tests use a second database, `bootcamp_connect_test`. A new
+database volume only has `bootcamp_connect`, so create the test one once
+(without it every backend test errors with "database does not exist"):
+
+```powershell
+docker compose exec -T db psql -U bootcamp -d bootcamp_connect -c "CREATE DATABASE bootcamp_connect_test"
+```
+
 ```powershell
 docker compose exec -T backend pytest tests                      # 240 passed
 docker compose exec -T frontend npx vitest run                   # 39 passed

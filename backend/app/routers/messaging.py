@@ -150,24 +150,7 @@ async def unread_count(
 ws_router = APIRouter()
 
 
-from urllib.parse import urlsplit
-
-
-def is_allowed_origin(origin: str, allowed_origins: list[str]) -> bool:
-    if "*" in allowed_origins or origin in allowed_origins:
-        return True
-    try:
-        hostname = (urlsplit(origin).hostname or "").lower()
-        if hostname.endswith(".trycloudflare.com"):
-            return True
-        for allowed in allowed_origins:
-            if allowed.startswith("*.") and hostname.endswith(allowed[1:].lower()):
-                return True
-            if allowed.startswith("https://*.") and hostname.endswith(allowed[len("https://*."):].lower()):
-                return True
-    except Exception:
-        return False
-    return False
+from app.origins import is_allowed_origin  # noqa: E402  (re-exported for tests)
 
 
 @ws_router.websocket("/api/v1/ws")

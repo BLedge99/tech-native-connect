@@ -2,6 +2,18 @@ FROM node:20-slim
 
 WORKDIR /app
 
+# System libraries for Playwright's bundled Chromium. `playwright install`
+# below downloads the browser but not these, and node:20-slim does not ship
+# them, so without this block every Playwright test fails with
+# "libglib-2.0.so.0: cannot open shared object file". Same block as on main.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        libglib2.0-0 libnss3 libnspr4 libdbus-1-3 libatk1.0-0 libatk-bridge2.0-0 \
+        libcups2 libdrm2 libxkbcommon0 libatspi2.0-0 libxcomposite1 libxdamage1 \
+        libxfixes3 libxrandr2 libgbm1 libpango-1.0-0 libcairo2 libasound2 \
+        libx11-6 libxcb1 libxext6 fonts-liberation \
+    && rm -rf /var/lib/apt/lists/*
+
 # Copy manifests first so the install layer is cached when only source changes.
 # Both files: without the lock file `npm install` resolves @playwright/test to
 # whatever is newest, and the browser revision the test asks for stops matching

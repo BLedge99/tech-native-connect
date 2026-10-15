@@ -436,6 +436,26 @@ async def test_demo_mode_returns_the_link_for_a_real_account(auth, client, monke
     assert "demo_link" not in unknown.json()
 
 
+async def test_magic_link_points_back_at_the_tunnel_origin(auth, client, monkeypatch):
+    """Behind a Cloudflare Quick Tunnel the browser is on *.trycloudflare.com.
+    A link built from APP_URL (localhost) is unreachable from the visitor's
+    device; a forged Origin must not redirect links to another site."""
+    from app.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "demo_expose_magic_links", True)
+    user = await auth(display_name="Tunnel Visitor")
+    tunnel = "https://brave-otter-1234.trycloudflare.com"
+    via_tunnel = await client.post(
+        "/api/v1/auth/magic-link", json={"email": user["email"]}, headers={"Origin": tunnel}
+    )
+    assert via_tunnel.json()["demo_link"].startswith(f"{tunnel}/api/v1/auth/magic-link/verify?token=")
+
+    forged = await client.post(
+        "/api/v1/auth/magic-link", json={"email": user["email"]}, headers={"Origin": "https://evil.example"}
+    )
+    assert forged.json()["demo_link"].startswith(get_settings().app_url.rstrip("/"))
+
+
 async def test_magic_link_can_only_be_consumed_once_concurrently(auth, db):
     """Two independent DB transactions racing on one token must yield one session."""
     from sqlalchemy.ext.asyncio import async_sessionmaker

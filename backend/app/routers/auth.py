@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import base64
 
-from fastapi import APIRouter, Depends, Response
+from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -17,6 +17,7 @@ from app.dependencies import (
     require_csrf,
 )
 from app.errors import BadRequest
+from app.origins import browser_base_url
 from app.models import Session
 from app.schemas import LoginRequest, MagicLinkRequest, RegisterRequest
 from app.serializers import user_private
@@ -110,7 +111,11 @@ async def logout(
 
 
 @router.post("/magic-link", status_code=202)
-async def magic_link(payload: MagicLinkRequest, db: AsyncSession = Depends(get_db)):
+async def magic_link(
+    payload: MagicLinkRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
     """Always 202, whether or not the email exists. A 404 here turns this
     endpoint into an account-enumeration oracle."""
     settings = get_settings()
@@ -126,7 +131,13 @@ async def magic_link(payload: MagicLinkRequest, db: AsyncSession = Depends(get_d
     body = {"message": "If that address has an account, a sign-in link is on its way."}
     if user is not None and user.is_active:
         token = await auth_svc.issue_magic_link(db, user)
-        link = auth_svc.magic_link_url(token, settings.app_url)
+        # The link goes back to the origin the user asked from (e.g. the
+        # Cloudflare tunnel URL), not APP_URL, which is localhost and
+        # unreachable from anyone else's device. Untrusted origins fall back.
+        base_url = browser_base_url(
+            request.headers.get("origin"), settings.cors_origin_list, settings.app_url
+        )
+        link = auth_svc.magic_link_url(token, base_url)
         await send_magic_link(user.email, link)
         await db.commit()
         # Only in demo mode, and only for an account that exists — which is

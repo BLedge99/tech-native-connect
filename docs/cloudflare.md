@@ -68,6 +68,7 @@ docker compose logs -f tunnel
 
 2. **Inline Magic Links (`DEMO_EXPOSE_MAGIC_LINKS=true`):**
    External visitors cannot access the local Mailpit inbox on `localhost:8025`. With `DEMO_EXPOSE_MAGIC_LINKS=true`, requesting a sign-in link displays the single-use magic link directly in the browser so any visitor can sign in without needing access to your local machine.
+   The link is built from the browser's own `Origin` (the tunnel URL) when that origin is trusted, so it works on the visitor's device; an untrusted or missing `Origin` falls back to `APP_URL`.
 
 3. **Seeded Test Accounts:**
    - **Business Developer:** `priya@example.com` / `demo-password-123`
@@ -91,3 +92,15 @@ If you have your own Cloudflare account and a registered domain:
    command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN}
    ```
 6. Run `.\run.bat tunnel`.
+
+---
+
+## 6. Troubleshooting
+
+| Symptom | Cause / fix |
+|---|---|
+| URL shows "502 Bad Gateway" | Frontend still starting. Wait ~30 s; check `docker compose logs frontend`. |
+| First page load is slow | Vite dev server sends many small modules; the first load over the tunnel can take 10–20 s. Later loads are cached. |
+| Old URL stopped working | Quick Tunnel URLs change every time the `tunnel` container restarts. Run `.\run.bat url` for the current one. |
+| "No tunnel URL yet" | `docker compose logs tunnel`. Corporate/school networks sometimes block outbound port 7844; cloudflared then falls back to HTTP/2 over 443 on its own. |
+| The PC sleeps | The tunnel lives on your machine: keep it awake and Docker running for the whole demo. |

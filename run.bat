@@ -42,13 +42,16 @@ goto end
 
 :tunnel
 %DOCKER_CMD% compose up -d --build
+if errorlevel 1 goto end
+REM Recreate the tunnel so its log holds only the URL from this run.
+%DOCKER_CMD% compose up -d --force-recreate --no-deps tunnel
 echo.
 echo [run.bat] Waiting for Cloudflare Tunnel to establish...
-powershell -NoProfile -Command "$found = $false; for ($i=0; $i -lt 30; $i++) { $logs = (%DOCKER_CMD% compose logs tunnel 2>&1 | Out-String); if ($logs -match 'https://[a-zA-Z0-9-]+\.trycloudflare\.com') { Write-Host ''; Write-Host '===================================================' -ForegroundColor Green; Write-Host '  Cloudflare Tunnel is LIVE! Open to web traffic:  ' -ForegroundColor Green; Write-Host ('  ' + $matches[0]) -ForegroundColor Cyan; Write-Host '===================================================' -ForegroundColor Green; Write-Host ''; $found = $true; break }; Start-Sleep -Seconds 1 }; if (-not $found) { Write-Host '[run.bat] Tunnel container started. Check URL with: %DOCKER_CMD% compose logs tunnel' -ForegroundColor Yellow }"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\tunnel-url.ps1" -Docker "%DOCKER_CMD%" -WaitSeconds 60
 goto end
 
 :url
-powershell -NoProfile -Command "$logs = (%DOCKER_CMD% compose logs tunnel 2>&1 | Out-String); if ($logs -match 'https://[a-zA-Z0-9-]+\.trycloudflare\.com') { Write-Host $matches[0] -ForegroundColor Cyan } else { Write-Host 'No active tunnel URL found. Run: %DOCKER_CMD% compose logs tunnel' -ForegroundColor Yellow }"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\tunnel-url.ps1" -Docker "%DOCKER_CMD%"
 goto end
 
 :panel
