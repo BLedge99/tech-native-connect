@@ -91,9 +91,16 @@ services:
   # ─── Cloudflare Tunnel ───────────────────────────────────────────────────
   # Exposes the frontend (and proxied backend + WebSockets) to the web via
   # a free Cloudflare Quick Tunnel (trycloudflare.com). No account required.
+  #
+  # ⚠️  NO `restart:` POLICY HERE, DELIBERATELY.
+  # A Quick Tunnel hostname is random and lives only as long as the cloudflared
+  # process. Restart the container and it comes back on a NEW hostname, so every
+  # URL already handed out silently dies with Cloudflare error 1033 ("the edge
+  # knows the hostname, no cloudflared is registered for it"). Letting the
+  # container stay down makes `run.bat url` report the truth instead, and the
+  # fix is one command: `run.bat tunnel`.
   tunnel:
     image: cloudflare/cloudflared:latest
-    restart: unless-stopped
     command: tunnel --no-autoupdate --url http://frontend:5173
     depends_on:
       - frontend

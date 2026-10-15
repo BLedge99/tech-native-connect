@@ -911,3 +911,553 @@ Updated 14 Oct after the documentation phase. Items 1–3 are now closed.
    `origin/web-deploy`. The documentation-phase edits (docs/deploy.md, ADR
    0013, `.env.example`, `helpers.ts`, `playwright.config.ts`,
    `zz-deploy-check.spec.ts`, this handoff, `AGENTS.md` §6) are uncommitted.
+
+---
+
+## 20. Cloudflare tunnel reachability — 15 October 2026
+
+**Branch:** `cloudflare-deploy` (not committed). **§20.6 is what is left.**
+
+### 20.1 What was reported, and what it actually was
+
+> "`./run.bat tunnel` creates a link that works through the machine hosting
+> the site but gives error 1033 on other devices."
+
+Cloudflare **1033** means the edge knows the hostname but no `cloudflared`
+instance is registered for it. The URL resolved; nothing was behind it.
+
+**Root cause, confirmed against the live tunnel.** The tunnel container's log
+contained **two** hostnames:
+
+| | Hostname | Health check |
+|---|---|---|
+| first in log | `elizabeth-hanging-him-camping.trycloudflare.com` | **HTTP 000 — dead** |
+| last in log | `responsibilities-clocks-friendly-thereof.trycloudflare.com` | **HTTP 200 — live** |
+
+`docker compose logs` prints the container's **entire history**, and
+PowerShell's `-match` returns the **first** match. A restarted `cloudflared` is
+handed a **new** random hostname while the dead one stays in the log — so
+`run.bat` printed the corpse. It worked "on the host" only because that URL had
+been live earlier in the session and was still open in a tab.
+
+**The app was never at fault.** Verified before changing anything:
+`main.py:101` sets `allow_origin_regex` for `*.trycloudflare.com`,
+`messaging.py:163` allows the same on the WebSocket handshake, and
+`vite.config.ts` sets `allowedHosts: true` with `ws: true` on the `/api`
+proxy. All three were already correct.
+
+### 20.2 Changes
+
+| File | Change |
+|---|---|
+| `scripts/tunnel-status.ps1` | **New.** Owns URL extraction and the health check. Takes the **last** match. Polls `GET <url>/api/v1/health` for up to 60 s and only prints the green banner on a real `200`; otherwise prints a yellow "NOT serving traffic yet" with the commands to diagnose it |
+| `run.bat` | `tunnel` and `url` now call that script. Detected `DOCKER_CMD` is split into `-DockerExe` / `-DockerPrefix` so the script can invoke it without re-parsing a command string |
+| `docker-compose.yml` | Removed `restart: unless-stopped` from `tunnel`, with a comment saying why. A silent restart comes back on a **different** hostname and orphans every URL already handed out without a word |
+| `docs/cloudflare.md` | New §2a "If you see Cloudflare error 1033" (cause → symptom → fix table) and §2b "Verifying the tunnel from outside". §3 and §5 corrected |
+
+**Why a `.ps1` and not a `node` script:** AGENTS.md §6 — Node is not on the
+Windows host. `run.bat` would have had to go through a container to run it.
+
+**Why the Quick Tunnel URL still changes** and that is not a regression: a
+Quick Tunnel hostname is random and lives only as long as the `cloudflared`
+process. Fixing the *reporting* is all that is possible without an account. A
+named tunnel (docs §5) needs a Cloudflare account and a domain; neither exists
+here, so that path was deliberately **not** built — untestable dead config.
+
+### 20.3 Two further bugs found while doing it
+
+**a. `is_allowed_origin` matched the bare label, so `https://*.example.test`
+also accepted `https://notexample.test`.** The old second branch stripped
+`https://*.` and compared the *bare* suffix `example.com`, which
+`notexample.com` ends with. Proven directly:
+
+```
+old accepts https://notexample.test via https://*.example.test -> True
+new accepts https://notexample.test via https://*.example.test -> False
+```
+
+Both wildcard forms now go through one `urlsplit` so the leading dot survives
+the comparison. **Note the apex is still rejected** — `https://*.example.test`
+means subdomains, which is how it always behaved.
+
+**b. The E2E suite could not launch a browser at all.** `frontend/Dockerfile`
+ran `npx playwright install chromium`, which installs the browser but **not**
+the shared libraries it links against. Every Playwright test — including the
+pre-existing `demo.spec.ts` — died with `libglib-2.0.so.0: cannot open shared
+object file`. Changed to `npx playwright install --with-deps chromium`. This is
+the same gap §17 flagged as a "temporary Windows dependency install"; it was
+never actually fixed in the Dockerfile, so **any** fresh `docker compose up
+--build` reproduced it. Confirmed pre-existing, not caused by this work.
+
+### 20.4 Tests added
+
+| File | Covers |
+|---|---|
+| `backend/tests/unit/test_tunnel_origins.py` (new) | 24 cases. Quick Tunnel origins allowed; lookalikes (`…trycloudflare.com.attacker.test`, `…localhost:5173.attacker.test`) rejected; the wildcard regression from 20.3a; malformed origins rejected rather than raising |
+| `frontend/tests/tunnel.spec.ts` (new) | **The reproduction.** `test.skip` unless `TUNNEL_URL` is set. Runs inside the Playwright container — a **different network namespace from the host** — so `localhost:5173` and the public hostname are genuinely different paths. Checks health, landing page + assets, sign-in setting a cookie on the tunnel host, and a real WebSocket `readyState` |
+
+Same two rules as the rest of the suite: no network mocking, and every
+assertion has a witness that is not the rendered page.
+
+**Both verified to have teeth:**
+
+```
+# live URL
+4 passed (15.4s)
+
+# dead URL — every one fails
+✘ serves the health endpoint          Error: getaddrinfo ENOTFOUND …
+✘ serves the landing page             Error: page.goto: ERR_NAME_NOT_RESOLVED
+✘ signs in and loads matches
+✘ accepts the WebSocket handshake
+4 failed
+```
+
+### 20.5 Verification status — what is green and what is NOT
+
+| Check | Result |
+|---|---|
+| `docker compose exec -T backend pytest tests/unit -q` | **98 passed** |
+| `npx tsc --noEmit` | clean |
+| `tunnel.spec.ts` against the live URL | **4 passed** |
+| `tunnel.spec.ts` against the dead URL | 4 failed (correct) |
+| `docker compose exec -T backend pytest tests -q` | ⚠️ **NOT COMPLETED** — see 20.6 |
+| `npx vitest run` | ⚠️ **NOT RUN** |
+| Full `npx playwright test` | ⚠️ **NOT RUN** |
+| `node scripts/check-no-mocking.mjs` | ⚠️ **NOT RUN** |
+| `scripts/tunnel-status.ps1` syntax | ⚠️ **NEVER EXECUTED — no PowerShell on this box.** Must be run on Windows before the demo |
+
+### 20.6 Bugs and blockers still open
+
+1. **`scripts/tunnel-status.ps1` has never been executed.** No `pwsh` on the
+   WSL side and the script targets Windows PowerShell 5.1. `run.bat url` is the
+   thing a marker will type — **run it on Windows first.**
+2. **The full backend suite did not finish.** It aborted on an environment
+   fault, not a code fault: `tests/conftest.py` builds the schema against
+   `TEST_DATABASE_URL` = `bootcamp_connect_test`, and that database **did not
+   exist** (see 20.7). It has now been created; the suite needs re-running.
+3. **The frontend image was rebuilt** for 20.3b, so the 39 component tests and
+   19 E2E tests are running against an image that has never been exercised.
+   **The demo is today.** Run the full §13.3 gate before showing anyone.
+4. `git status` shows **~150 modified files**. This is **CRLF↔LF line-ending
+   noise**, not content — insert and delete counts are identical on every
+   file (`seed.py` alone: 409/409). Do not "fix" or review that diff, and do
+   not let it into a commit as-is.
+5. **The tunnel hostname changes whenever the container is recreated.** There
+   is no way around this without a Cloudflare account. Re-run `run.bat tunnel`
+   and **re-share the URL** after any restart.
+6. `APP_URL` still defaults to `http://localhost:5173`, so an *emailed* magic
+   link points an outsider at their own localhost. The inline
+   `DEMO_EXPOSE_MAGIC_LINKS=true` path covers the demo and this was left alone.
+
+### 20.7 Environment notes worth keeping
+
+- **The test database is not created by anything in the repo.** It has to exist
+  before `pytest tests/integration` will run. On a fresh volume:
+
+  ```bash
+  docker compose exec -T db psql -U bootcamp -d postgres -c "CREATE DATABASE bootcamp_connect_test;"
+  ```
+
+- **`psql -U bootcamp` alone fails** with `FATAL: database "bootcamp" does not
+  exist` — libpq uses the username as the database name. Always pass `-d`.
+  This is the same trap as the healthcheck fix in §15.
+- `docker compose logs tunnel | grep -oE 'https://[a-zA-Z0-9-]+\.trycloudflare\.com'`
+  — if that prints **more than one**, the container has restarted and the last
+  one is the live URL. That is the diagnostic for 1033.
+
+### 20.8 There are TWO copies of this project — read this first
+
+Discovered while re-running the suite. It changes what "fixed" means.
+
+| | `tech-native-connect/` (this repo) | `../connect-app/` |
+|---|---|---|
+| Git repo | yes | **yes, separate** — branch `cloudflare-deploy`, HEAD `b87a219` *"feat: add Cloudflare Tunnel support"* |
+| Compose project name | `tech-native-connect` | `connect-app` |
+| Containers | **none** — all removed partway through this session | `connect-app-tunnel-1` **up**, rotated through **4** hostnames |
+| The 1033 bug | **fixed** in this work | **still present** — `run.bat:47` and `:51` both use `$matches[0]` (first match), `docker-compose.yml:96` still has `restart: unless-stopped` |
+| `scripts/tunnel-status.ps1` | added | **absent** |
+
+The tunnel that produced the 4 rotated hostnames — and almost certainly the
+one that was 1033-ing for the marker — belongs to **`connect-app`**, not to
+this repo. The fix has **not** been applied there.
+
+> **✅ DECIDED 15 Oct: `connect-app` is a stale fork. Do not touch it.**
+> No fix is owed to that copy. If a marker reports 1033 again, check which
+> directory the stack was started from **before** changing anything here —
+> `docker compose ls` names the project, and `connect-app` is still running
+> with the old `run.bat`. This repo is the one AGENTS.md documents.
+
+**Neither copy's `run.bat` has ever been executed against a PowerShell that
+could run it** (§20.6 item 1). Both are unverified.
+
+### 20.9 Corrected blocker status
+
+- §20.6 item 2 is superseded. The correct explanation, confirmed from
+  `docker events` after it happened a second time:
+
+  > **This environment kills the whole stack under load.** All five
+  > `tech-native-connect-*` containers `die` within ~15 s of each other
+  > (`tunnel-1 exit=137` — SIGKILL; the rest exit 0, i.e. a graceful daemon
+  > shutdown), and the project then disappears from both `docker ps` and
+  > `docker compose ls`. A sibling project's containers survive. Total RAM is
+  > **3.7 GB**, and the full backend suite spawns a live uvicorn per test
+  > module on top of Postgres, Vite and mailpit.
+
+  So: **the full backend suite cannot be completed in this box**, and a
+  container vanishing mid-run is the environment, not the code. Do not go
+  hunting for a cause in the application. If it must be run, stop the other
+  Compose projects first:
+
+  ```bash
+  docker compose -f ../connect-app/docker-compose.yml down
+  docker compose exec -T db psql -U bootcamp -d postgres -c "CREATE DATABASE bootcamp_connect_test;"  # already done
+  docker compose exec -T backend pytest tests -q
+  ```
+
+  **An earlier note in this section called the first occurrence a "transient
+  Docker daemon hiccup". That was wrong** — it was the same event, and it
+  recurred within minutes.
+
+### 20.10 Two more bugs, found after §20.3 — both from running the thing
+
+**c. `run.bat` printed no URL at all on the native-Windows path.** `run.bat`
+passed `-DockerExe docker -DockerPrefix docker`, and `tunnel-status.ps1` ran
+them as one command: `docker docker compose logs tunnel` → `unknown command` →
+empty log → *"No tunnel URL found"* — **while a perfectly healthy tunnel was
+running.** Fixed: the prefix defaults to empty and the argument list is built
+conditionally, so it runs `docker compose …` natively and `wsl docker compose
+…` through WSL. The no-URL branch now also reports the exact command it ran
+and whether the log came back empty, which is what makes the next occurrence
+obvious instead of mysterious.
+
+**This is precisely the failure §20.6 item 1 warned about**: the script had
+never been executed. It could only be found by running it on Windows. **Do the
+same before trusting any of it again.**
+
+**d. The integration suite could never pass inside Compose.**
+`docker-compose.yml:65` sets `DEMO_EXPOSE_MAGIC_LINKS=true` on the backend, and
+`backend/tests/conftest.py` inherited it. So
+`test_magic_link_is_never_returned_in_the_body_by_default` — which asserts the
+flag is **off** — failed on every in-container run. This arrived with the §18
+deployment workstream and is the concrete instance of §19 item 5 ("nothing has
+been run against the §18 changes"). Fixed by forcing the flag off in
+`conftest.py` before `app.config` is imported; the demo-mode test that needs it
+on monkeypatches the setting itself and still passes.
+
+### 20.11 Verification status, final
+
+| Check | Result |
+|---|---|
+| `pytest tests/unit -q` | **98 passed** |
+| `pytest tests/integration/test_rules.py -k magic_link -q` | **4 passed** (20.10d) |
+| `npx tsc --noEmit` | clean |
+| `tunnel.spec.ts` vs live URL (`award-troubleshooting-nothing-human`) | **4 passed** |
+| `tunnel.spec.ts` vs dead URL | **4 failed** (correct) |
+| `pytest tests -q` (full) | ⚠️ **CANNOT COMPLETE HERE** — see §20.9, the environment kills the stack |
+| `npx vitest run` | ⚠️ **NOT RUN** |
+| Full `npx playwright test` | ⚠️ **NOT RUN** |
+| `node scripts/check-no-mocking.mjs` | ⚠️ **NOT RUN** |
+| `scripts/tunnel-status.ps1` on **Windows** | ⚠️ **NEVER EXECUTED** — 20.10c |
+
+**Three suites and the PowerShell script are still unverified.** Given the
+demo date, that is the remaining risk, not the tunnel code.
+
+---
+
+## 21. "DB isn't working" — it was, the sign-in-link page was lying — 15 October 2026
+
+Report, after §20 made the site externally reachable:
+
+> "not sure the db is working… I logged in but it didn't send any confirmation
+> email, then after logging out I couldn't log back in with the credentials I
+> signed up with, and the *email me a sign in link* button didn't work."
+
+### 21.1 The database was never the problem
+
+Proven, not assumed:
+
+| Check | Result |
+|---|---|
+| `GET /api/v1/health` | `{"status":"ok","database":"ok"}` |
+| Seeded demo users (`priya@example.com`, `ben@bootcamp.example.com`) | present |
+| Earliest user row | `09:12` — **the volume never got wiped** |
+| `POST /auth/register` via the tunnel | **201** |
+| `POST /auth/login` via the tunnel | **200** |
+| `POST /auth/magic-link` for an account | **202 + `demo_link`** |
+| Rate limiter | 7 consecutive bad logins, all 401 — the 20/min limit is nowhere near |
+
+### 21.2 What actually happened
+
+All three symptoms are one bug, on one page.
+
+`MagicLinkPage` (`frontend/src/pages/AuthPages.tsx`) had exactly two branches:
+a link, or *"The link appears in Mailpit at **localhost:8025**"*. Over the
+tunnel an external visitor is not on the host, so `localhost:8025` is their own
+empty machine. Reproduced through the live tunnel:
+
+```
+Sign-in link  —  If that address has an account, a link is on its way.
+Development shortcut: no email is actually sent. The link appears in
+Mailpit at localhost:8025.
+```
+
+So: **no email** (Mailpit is unreachable off-host — by design), **link button
+"broken"** (a dead end), and **couldn't log back in** (if they came in through
+this flow, no password was ever set — the flow cannot create an account).
+
+Sign-in and password auth were fine the whole time; a new test now proves the
+register → sign out → sign back in round trip over the tunnel.
+
+### 21.3 Fix
+
+`isLocalHost` branch in `MagicPages.tsx`. The dev-only Mailpit pointer is kept
+verbatim **on localhost**, so the developer experience is unchanged. Off-host
+the visitor is told the demo cannot deliver email and pointed at
+`create an account` — wording that renders **identically whether or not the
+account exists**, which is what preserves the enumeration guarantee that
+`test_magic_link_is_never_returned_in_the_body_by_default` protects. The
+backend is untouched.
+
+### 21.4 Branch `cloudflare-deploy` was broken — two files were never committed
+
+`HEAD` (`b87a219`) contains `frontend/tests/regression.spec.ts`, which imports
+`./db` — but **`frontend/tests/db.ts` is not in the commit**. The entire
+Playwright suite therefore failed to collect:
+
+```
+Error: Cannot find module '/app/tests/db' imported from /app/tests/regression.spec.ts
+```
+
+`scripts/check-no-mocking.mjs` was missing too, so the guard AGENTS.md §6 tells
+you to run did not exist. Both were recovered from `f5703bf` (`origin/main`),
+the only commit that has them:
+
+```bash
+git checkout f5703bf -- frontend/tests/db.ts scripts/check-no-mocking.mjs
+```
+
+**This stages them.** Nothing has been committed. `db.ts` predates this work —
+its absence was a packaging mistake in `b87a219`, not something §20 introduced.
+
+### 21.5 Verification, 15 October
+
+| Check | Result |
+|---|---|
+| `npx tsc --noEmit` | **clean** |
+| `npx vitest run` | **39 passed** |
+| `node scripts/check-no-mocking.mjs` | **passed** (after 21.4) |
+| `tunnel.spec.ts`, live URL | **6 passed** |
+| `pytest tests/unit -q` | **98 passed** |
+| Full `npx playwright test` | **18 passed, 1 failed, 6 skipped** |
+| Backend log scan (`traceback`/`unhandled`/`staledata`) | **0 matches** |
+
+**The one failure is the documented §5.1 centrepiece flake, not a regression.**
+`the demo path › request → accept → message` hit its 90 s budget at 1.5 min
+under full-suite load. Run alone it **passes in 29.8 s**. Same signature as
+§5.1: assertion position moves, budget exceeded, logic fine. This box has
+3.7 GB of RAM and the daemon drops the stack under load (§20.9), which makes
+the budget easier to miss.
+
+### 21.6 Still open
+
+1. **`scripts/tunnel-status.ps1` has never run on Windows** (§20.10c). `run.bat
+   url` is what a marker types.
+2. **Full backend suite still cannot complete here** — the environment kills
+   the stack (§20.9). Last clean figure was 98 unit + 4 magic-link integration.
+3. **Committed locally** as `fix(tunnel): resolve the live tunnel URL…` —
+   but see 22.7: **not yet pushed.**
+4. **The tunnel hostname changes every time the container is recreated**, and
+   this environment recreates containers. Re-run `run.bat tunnel` and
+   **re-share the URL** before the demo.
+
+---
+
+## 22. Consolidated state of this session — read this before touching anything
+
+Everything in §20 and §21, in one place. **Branch `cloudflare-deploy`, HEAD
+`b87a219`. Nothing is committed.**
+
+### 22.1 Files actually changed (CRLF noise excluded)
+
+`git status` shows ~150 modified files. **Almost all of them are CRLF↔LF
+noise** — insert and delete counts are identical, so there is nothing to
+review. To see only real changes:
+
+```bash
+git diff --ignore-cr-at-eol --numstat HEAD | awk '$1!=0 || $2!=0'
+```
+
+| File | ± | What |
+|---|---|---|
+| `backend/app/routers/messaging.py` | +7 −3 | `is_allowed_origin`: wildcard no longer matches the bare label (§20.3a) |
+| `backend/tests/conftest.py` | +9 | forces `DEMO_EXPOSE_MAGIC_LINKS=false` so the integration suite can pass in Compose (§20.10d) |
+| `docker-compose.yml` | +8 −1 | removed `restart: unless-stopped` from `tunnel` (§20.2) |
+| `run.bat` | +10 −2 | delegates to `tunnel-status.ps1`; no more doubled `docker docker` (§20.10c) |
+| `scripts/tunnel-status.ps1` | **new** | last-match URL extraction + health poll (§20.2) |
+| `frontend/Dockerfile` | +6 −4 | `playwright install --with-deps` — E2E could not launch a browser (§20.3b) |
+| `frontend/src/pages/AuthPages.tsx` | +21 −1 | sign-in-link page no longer dead-ends external visitors on `localhost:8025` (§21.3) |
+| `frontend/tests/db.ts` | +134 | **recovered from `f5703bf`** — was missing from HEAD (§21.4) |
+| `scripts/check-no-mocking.mjs` | +110 | **recovered from `f5703bf`** — was missing from HEAD (§21.4) |
+| `docs/cloudflare.md` | +61 | §2a the 1033 table, §2b off-host verification |
+| `frontend/tests/tunnel.spec.ts` | **new** | 6 tests, `TUNNEL_URL`-gated |
+| `backend/tests/unit/test_tunnel_origins.py` | **new** | 24 cases |
+| `handoff.md` | — | §20, §21, §22 |
+
+### 22.2 Staging state
+
+Everything in 22.1 went in as one commit on `cloudflare-deploy`,
+`fix(tunnel): resolve the live tunnel URL, verify it, and fix off-host
+auth`. Two notes on
+how that commit was assembled, because both are traps:
+
+- **`git checkout <commit> -- <path>` stages as a side effect**, which is how
+  `db.ts` and `check-no-mocking.mjs` ended up in the index early.
+- **The impeccable tool stages its own files too.** Running `impeccable` left
+  all 62 of them *and* the working changes in the index, including a 19 MB
+  Windows executable. Check `git diff --cached` after running it, and
+  `git rm --cached -r .github/skills/impeccable` before committing.
+
+Files committed were normalized to **LF** to match the repo. The whole working
+tree had flipped to CRLF (§20.6 item 4); committing as-is would have mixed
+endings in 15 files for no reason.
+
+### 22.3 Untracked files, and a correction
+
+> ⚠️ **This subsection originally said `.github/skills/impeccable/**` was
+> "an unrelated tool drop — do not commit". That was wrong, and the user
+> corrected it the same day.** It is the `impeccable` design skill, used
+> deliberately. Do not treat it as noise.
+
+`.github/skills/impeccable/**` (plus `.github/agents/impeccable-*.md` and
+`.github/hooks/impeccable.json`) is the user's own tooling and is **not** part
+of the tunnel work — but it is **not** junk either, so the decision to commit
+or ignore it belongs to the user, not to a future agent guessing from a
+`git status`.
+
+Files that are unambiguously ours, from §20–§22:
+
+- `scripts/tunnel-status.ps1` (new)
+- `frontend/tests/tunnel.spec.ts` (new)
+- `backend/tests/unit/test_tunnel_origins.py` (new)
+- `PRODUCT.md` (new, 15 Oct — `impeccable init` product record)
+
+### 22.4 Final verification figures, 15 October
+
+| Check | Result |
+|---|---|
+| `npx tsc --noEmit` | **clean** |
+| `npx vitest run` | **39 passed** |
+| `node scripts/check-no-mocking.mjs` | **passed** |
+| `tunnel.spec.ts` vs live URL | **6 passed** |
+| `tunnel.spec.ts` vs a dead URL | **6 failed** (proves the tests bite) |
+| `pytest tests/unit -q` | **98 passed** |
+| `pytest tests/integration/test_rules.py -k magic_link` | **4 passed** |
+| Full `npx playwright test` | **18 passed, 1 failed, 6 skipped** |
+| `pytest tests -q` (full backend) | **cannot complete here** — §20.9 |
+| Backend log scan | **0 matches** for traceback/unhandled/staledata |
+
+The single E2E failure is the §5.1 centrepiece flake: 1.5 min against a 90 s
+budget under full-suite load, **29.8 s and passing when run alone**.
+
+### 22.5 The tunnel hostname changed 8 times today
+
+`docker compose logs tunnel | grep -c trycloudflare.com` returns **8**. Every
+container recreation mints a new hostname and kills the previous one — and this
+environment recreated the stack twice under load (§20.9).
+
+Current: `https://award-troubleshooting-nothing-human.trycloudflare.com`
+
+**Re-run `.\run.bat tunnel` and re-share the URL immediately before the demo.**
+This is the single most likely thing to make the demo fail, and it is exactly
+the failure that produced the original 1033 report.
+
+### 22.6 What a new agent should do first
+
+1. Read §20.6 item 1 and §22.6 — **run `.\run.bat url` on Windows.** It has
+   never executed. Every other claim here was machine-verified; that one was not.
+2. `docker compose up -d --build` (the frontend image changed — Playwright deps).
+3. Re-run the four suites plus `check-no-mocking.mjs` (§22.4).
+4. If the full backend suite dies again, stop the other Compose projects first:
+   `docker compose -f ../connect-app/docker-compose.yml down`. 3.7 GB of RAM is
+   not enough for the suite plus the stack plus a sibling project.
+5. **Push the tunnel fix commit.** It is committed locally and is 1 ahead of
+   `origin/cloudflare-deploy`; see 22.7.
+
+---
+
+## 23. PRODUCT.md created — 15 October 2026
+
+`/impeccable init` (the project has an `impeccable` design skill in
+`.github/skills/impeccable/`). It captures **durable product truth** and writes
+`PRODUCT.md` at the project root. Completion gate verified —
+`impeccable context` now resolves `productPath: PRODUCT.md`, `platform: web`.
+
+**Three facts confirmed by the user, which override repo inference:**
+
+1. **This is coursework** — an assessed project, no real users. The
+   demonstration audience is an assessor.
+2. **Local Docker + Cloudflare tunnel only.** There is no hosted deployment.
+   `render.yaml` and the whole `web-deploy` workstream (§18) are *not* a
+   deployment commitment and must not be described as one in future docs.
+   PRODUCT.md says so explicitly.
+3. **Only the terminal identity is a binding brand commitment.** The product
+   name is *not* confirmed final, and the prose voice is *not* binding.
+
+Recorded as deliberately undecided rather than invented: the name, any pricing
+or licensing model, and any accessibility conformance target.
+
+**Binding absences written into the file**, so future copy and marketing work
+cannot invent them: no real users, no testimonials, no usage metrics, no
+customer logos, no press.
+
+`PRODUCT.md` holds no visual world, palette, typography or component spec by
+design — `init` never writes those. The committed terminal identity is recorded
+as a *constraint to preserve*, not as a description of the current look.
+
+**No DESIGN.md exists.** The project has a coherent, deliberately-built
+interface (handoff §15) and no record of it; `/impeccable document` is the
+command that captures one. `live` mode is also unconfigured — it needs a CSP
+source edit, which requires asking first.
+
+`buildPath` was **not** recorded in `.impeccable/config.json`: no image
+generation is available in this session, and the rule is code-first when there
+is none. Nothing was written, rather than inventing a default nobody chose.
+
+### 22.7 PUSH PENDING — the tunnel fix commit is local only
+
+Committed to `cloudflare-deploy` as `fix(tunnel): resolve the live tunnel URL,
+verify it, and fix off-host auth`, but **not pushed**. The push
+failed in the agent's shell:
+
+```
+fatal: could not read Username for 'https://github.com': No such device or address
+```
+
+There is no credential helper and `gh` is not installed, and installing either
+is a host change — so it was not done unilaterally. The agent shell also has
+no git identity, so the commit was made with `-c user.name/user.email` using
+the repo's existing author (`Ben Ledger <benle@example.com>`) rather than by
+writing to git config.
+
+**To publish:**
+
+```bash
+cd "/mnt/c/Users/benle/Documents/Projects/TechNative/Group Project/tech-native-connect"
+git push origin cloudflare-deploy
+```
+
+0 behind, 1 ahead at the time of writing — a fast-forward, no rebase needed.
+Re-check with `git rev-list --left-right --count origin/cloudflare-deploy...HEAD`
+first, in case anyone else pushed.
+
+**Commit contents, 15 files:** `.gitignore`, `PRODUCT.md`,
+`backend/app/routers/messaging.py`, `backend/tests/conftest.py`,
+`backend/tests/unit/test_tunnel_origins.py`, `docker-compose.yml`,
+`docs/cloudflare.md`, `frontend/Dockerfile`,
+`frontend/src/pages/AuthPages.tsx`, `frontend/tests/db.ts`,
+`frontend/tests/tunnel.spec.ts`, `handoff.md`, `run.bat`,
+`scripts/check-no-mocking.mjs`, `scripts/tunnel-status.ps1`.
+
+The impeccable payload (21 MB, 19 MB of it a Windows binary) is gitignored,
+not committed — the user's decision.

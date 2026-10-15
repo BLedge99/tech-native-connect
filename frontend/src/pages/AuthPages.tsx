@@ -175,6 +175,12 @@ export function MagicLinkPage() {
   const [demoLink, setDemoLink] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
+  // True on the developer's own machine, false for anyone arriving over the
+  // Cloudflare tunnel. The dev-only Mailpit pointer is meaningless off-host.
+  const isLocalHost = /^https?:\/\/(localhost|127\.0\.0\.1)(:|\/|$)/.test(
+    window.location.origin,
+  )
+
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()
     setBusy(true)
@@ -206,7 +212,7 @@ export function MagicLinkPage() {
                 {demoLink.replace(/^https?:\/\/[^/]+/, window.location.origin)}
               </a>
             </div>
-          ) : (
+          ) : isLocalHost ? (
             <p className="rounded-lg bg-slate-100 p-3 text-xs">
               Development shortcut: no email is actually sent. The link appears in
               Mailpit at{' '}
@@ -214,6 +220,20 @@ export function MagicLinkPage() {
                 localhost:8025
               </a>
               .
+            </p>
+          ) : (
+            // Reached over the Cloudflare tunnel. Mailpit is on port 8025 of
+            // the machine hosting the demo, so "check localhost:8025" sends a
+            // remote visitor to their own empty machine and the page reads as
+            // broken. It also must not say whether the account exists — this
+            // branch renders identically either way, which is what keeps the
+            // enumeration guarantee.
+            <p className="rounded-lg bg-slate-100 p-3 text-xs">
+              This demo cannot deliver real email. If this is your first visit,{' '}
+              <Link to="/register" className="font-semibold underline">
+                create an account
+              </Link>{' '}
+              first, then request a link for that address.
             </p>
           )}
           <Link to="/login" className="text-brand-600 underline">

@@ -18,8 +18,16 @@ if errorlevel 1 (
         exit /b 1
     )
     set "DOCKER_CMD=wsl docker"
+    set "DOCKER_EXE=wsl"
+    set "DOCKER_PREFIX=docker"
     echo [run.bat] docker not working on Windows — using WSL.
 )
+
+REM scripts/tunnel-status.ps1 invokes docker as <exe> <prefix> compose ...
+REM The prefix is empty unless we had to go through WSL — passing "docker" for
+REM both produced `docker docker compose`, which fails with "unknown command"
+REM and made the script report no tunnel URL when one was running.
+if not defined DOCKER_EXE set "DOCKER_EXE=docker"
 
 REM ── Parse command ──────────────────────────────────────────────────────────
 set "CMD=%1"
@@ -44,11 +52,11 @@ goto end
 %DOCKER_CMD% compose up -d --build
 echo.
 echo [run.bat] Waiting for Cloudflare Tunnel to establish...
-powershell -NoProfile -Command "$found = $false; for ($i=0; $i -lt 30; $i++) { $logs = (%DOCKER_CMD% compose logs tunnel 2>&1 | Out-String); if ($logs -match 'https://[a-zA-Z0-9-]+\.trycloudflare\.com') { Write-Host ''; Write-Host '===================================================' -ForegroundColor Green; Write-Host '  Cloudflare Tunnel is LIVE! Open to web traffic:  ' -ForegroundColor Green; Write-Host ('  ' + $matches[0]) -ForegroundColor Cyan; Write-Host '===================================================' -ForegroundColor Green; Write-Host ''; $found = $true; break }; Start-Sleep -Seconds 1 }; if (-not $found) { Write-Host '[run.bat] Tunnel container started. Check URL with: %DOCKER_CMD% compose logs tunnel' -ForegroundColor Yellow }"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\tunnel-status.ps1" -Mode tunnel -DockerExe "%DOCKER_EXE%" -DockerPrefix "%DOCKER_PREFIX%"
 goto end
 
 :url
-powershell -NoProfile -Command "$logs = (%DOCKER_CMD% compose logs tunnel 2>&1 | Out-String); if ($logs -match 'https://[a-zA-Z0-9-]+\.trycloudflare\.com') { Write-Host $matches[0] -ForegroundColor Cyan } else { Write-Host 'No active tunnel URL found. Run: %DOCKER_CMD% compose logs tunnel' -ForegroundColor Yellow }"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\tunnel-status.ps1" -Mode url -DockerExe "%DOCKER_EXE%" -DockerPrefix "%DOCKER_PREFIX%"
 goto end
 
 :panel

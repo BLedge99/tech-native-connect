@@ -161,9 +161,13 @@ def is_allowed_origin(origin: str, allowed_origins: list[str]) -> bool:
         if hostname.endswith(".trycloudflare.com"):
             return True
         for allowed in allowed_origins:
-            if allowed.startswith("*.") and hostname.endswith(allowed[1:].lower()):
-                return True
-            if allowed.startswith("https://*.") and hostname.endswith(allowed[len("https://*."):].lower()):
+            # "*.example.com" and "https://*.example.com" mean the same thing:
+            # any hostname ending in ".example.com". The leading dot has to
+            # survive the comparison — matching the bare suffix "example.com"
+            # would also accept "notexample.com".
+            pattern = allowed if "//" in allowed else f"https://{allowed}"
+            suffix = urlsplit(pattern).hostname or ""
+            if suffix.startswith("*.") and hostname.endswith(suffix[1:].lower()):
                 return True
     except Exception:
         return False

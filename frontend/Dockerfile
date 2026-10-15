@@ -9,10 +9,12 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
 
-# Chromium itself. Without this every Playwright test fails with "Executable
-# doesn't exist" — which reads like a broken app rather than a missing browser,
-# and the cache lives outside /app so it does not survive a container recreate.
-RUN npx playwright install chromium
+# Chromium itself, plus the shared libraries it links against. `--with-deps`
+# runs apt-get for them; without it every Playwright test fails to launch with
+# "libglib-2.0.so.0: cannot open shared object file" — which reads like a
+# broken app rather than a missing system library. The browser cache lives
+# outside /app so it does not survive a container recreate.
+RUN npx playwright install --with-deps chromium
 
 COPY . .
 

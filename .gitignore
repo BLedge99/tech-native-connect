@@ -111,3 +111,11 @@ scratch/
 *.bak
 *.orig
 *.rej
+
+# ─── Local agent tooling ─────────────────────────────────────────────────────
+# The impeccable design skill: ~21 MB, mostly a 19 MB Windows executable and a
+# 1.1 MB font index. Personal toolchain, not a project dependency — keep it out
+# of history rather than paying for it on every clone forever.
+.github/skills/impeccable/
+.github/agents/impeccable-*.md
+.github/hooks/impeccable.json

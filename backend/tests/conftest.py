@@ -19,6 +19,15 @@ if str(ROOT) not in sys.path:
 
 os.environ.setdefault("APP_ENV", "test")
 
+# The dev stack sets DEMO_EXPOSE_MAGIC_LINKS=true (docker-compose.yml) so a
+# visitor with no mail provider can still sign in. Integration tests inherit
+# that env var, so `test_magic_link_is_never_returned_in_the_body_by_default`
+# could never pass in-container — it asserts the OFF behaviour. The demo-mode
+# test that needs it ON monkeypatches the setting itself, so forcing it off
+# here costs nothing and makes the suite pass identically on a host and in
+# Compose. Must be set before app.config is imported below.
+os.environ["DEMO_EXPOSE_MAGIC_LINKS"] = "false"
+
 # Must happen BEFORE app.config is imported: the engine is built at import time,
 # so redirecting the URL afterwards would leave the app on the dev database.
 from app.config import get_settings  # noqa: E402
