@@ -24,7 +24,15 @@ RUN npm ci
 # Chromium itself. Without this every Playwright test fails with "Executable
 # doesn't exist" — which reads like a broken app rather than a missing browser,
 # and the cache lives outside /app so it does not survive a container recreate.
-RUN npx playwright install chromium
+#
+# Optional: it is the largest layer in the image, and on some Windows/WSL
+# machines Docker crashes saving it ("failed to receive status: rpc error ...
+# EOF"). The app itself never needs it. `run.bat tunnel` builds with
+# INSTALL_TEST_BROWSER=0; everything else keeps the default, so the E2E
+# suite works unchanged. After a tunnel build, run `.\run.bat build` before
+# Playwright tests (or `run.bat devcheck`, which installs it on demand).
+ARG INSTALL_TEST_BROWSER=1
+RUN if [ "$INSTALL_TEST_BROWSER" = "1" ]; then npx playwright install chromium; fi
 
 COPY . .
 

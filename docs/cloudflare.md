@@ -103,4 +103,6 @@ If you have your own Cloudflare account and a registered domain:
 | First page load is slow | Vite dev server sends many small modules; the first load over the tunnel can take 10–20 s. Later loads are cached. |
 | Old URL stopped working | Quick Tunnel URLs change every time the `tunnel` container restarts. Run `.\run.bat url` for the current one. |
 | "No tunnel URL yet" | `docker compose logs tunnel`. Corporate/school networks sometimes block outbound port 7844; cloudflared then falls back to HTTP/2 over 443 on its own. |
+| Build dies with `failed to receive status: rpc error ... EOF` | Docker ran out of memory saving the frontend image. `run.bat tunnel` now builds without the Playwright browser and one image at a time; if it still happens, restart Docker Desktop and run `docker builder prune -f`. |
+| Playwright tests say "Executable doesn't exist" after a tunnel run | The tunnel build skips the test browser. `.\run.bat build` puts it back. |
 | The PC sleeps | The tunnel lives on your machine: keep it awake and Docker running for the whole demo. |

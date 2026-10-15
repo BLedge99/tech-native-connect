@@ -1,0 +1,7 @@
+# The backend image builds from ./backend, so the root .dockerignore does not
+# apply here. A host .venv (Windows Python) must never replace the image's.
+.venv
+**/__pycache__
+**/*.pyc
+.pytest_cache
+videos

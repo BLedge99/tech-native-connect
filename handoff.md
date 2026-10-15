@@ -936,3 +936,12 @@ Fixed in this pass:
 
 Not verified in CI: the session that made these edits could not reach Docker
 Hub, PyPI or npm, so suites were not run there. Run the §13.3 gate locally.
+
+**Follow-up, same day (Alys's PC):** `run.bat tunnel` crashed Docker twice while
+saving the frontend image (`failed to receive status: rpc error ... EOF`).
+Causes: no `.dockerignore` in `frontend/` or `backend/` (the root one does not
+apply to those build contexts), so the host's Windows `node_modules` and `.venv`
+were copied into the images; plus the Playwright browser layer, built in
+parallel with the backend. Fixed with per-context `.dockerignore` files, an
+`INSTALL_TEST_BROWSER` build arg (default 1; `run.bat tunnel` uses 0), and a
+sequential, attestation-free build in `run.bat tunnel` with `up -V`.

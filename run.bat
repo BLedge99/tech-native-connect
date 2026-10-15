@@ -42,7 +42,20 @@ goto help
 goto end
 
 :tunnel
-%DOCKER_CMD% compose up -d --build
+REM Lean build for the demo: no Playwright browser, no build attestations,
+REM and one image at a time. Building both in parallel and saving the big
+REM test-browser layer is what crashed Docker on Windows (rpc error ... EOF).
+REM WSLENV carries these variables across when docker runs through WSL.
+set "INSTALL_TEST_BROWSER=0"
+set "BUILDX_NO_DEFAULT_ATTESTATIONS=1"
+set "WSLENV=INSTALL_TEST_BROWSER/u:BUILDX_NO_DEFAULT_ATTESTATIONS/u:%WSLENV%"
+%DOCKER_CMD% compose build backend
+if errorlevel 1 goto end
+%DOCKER_CMD% compose build frontend
+if errorlevel 1 goto end
+REM -V: rebuild the anonymous node_modules volume from the new image, so a
+REM stale one copied from an earlier (Windows-polluted) image is not reused.
+%DOCKER_CMD% compose up -d -V
 if errorlevel 1 goto end
 REM Recreate the tunnel so its log holds only the URL from this run.
 %DOCKER_CMD% compose up -d --force-recreate --no-deps tunnel

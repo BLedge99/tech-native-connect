@@ -1,0 +1,10 @@
+# The frontend image builds from ./frontend, so the root .dockerignore does not
+# apply here. Without this file a host node_modules (Windows binaries, 100+ MB)
+# is copied over the Linux one `npm ci` just installed: the image doubles in
+# size and Vite/rollup load the wrong native module.
+node_modules
+dist
+test-results
+playwright-report
+videos-raw
+.vite

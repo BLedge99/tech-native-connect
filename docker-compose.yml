@@ -78,7 +78,12 @@ services:
 
   # ─── Frontend ────────────────────────────────────────────────────────────
   frontend:
-    build: ./frontend
+    build:
+      context: ./frontend
+      args:
+        # 0 skips the Playwright browser (see frontend/Dockerfile). run.bat
+        # tunnel sets 0; the default keeps the E2E suite working.
+        INSTALL_TEST_BROWSER: ${INSTALL_TEST_BROWSER:-1}
     command: npm run dev -- --host 0.0.0.0 --port 5173
     ports:
       - "5173:5173"
