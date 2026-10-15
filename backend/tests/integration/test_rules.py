@@ -360,6 +360,27 @@ async def test_unknown_email_and_wrong_password_are_identical(auth, client):
     assert wrong.text == unknown.text
 
 
+async def test_login_throttle_returns_retry_after(client, monkeypatch):
+    from app.routers import auth as auth_router
+    from app.services.rate_limit import SlidingWindowRateLimiter
+
+    monkeypatch.setattr(auth_router, "auth_rate_limiter", SlidingWindowRateLimiter())
+    body = {"email": "throttle@example.com", "password": "wrong-password"}
+    # Drive it until it throttles rather than counting to a fixed number, so
+    # tuning LOGIN_LIMIT in routers/auth.py does not silently break this test.
+    limited = None
+    for _ in range(100):
+        response = await client.post("/api/v1/auth/login", json=body)
+        if response.status_code == 429:
+            limited = response
+            break
+        assert response.status_code == 401
+
+    assert limited is not None, "login was never throttled"
+    assert limited.json()["error"]["code"] == "rate_limited"
+    assert int(limited.headers["retry-after"]) > 0
+
+
 async def test_email_normalisation_prevents_duplicate_accounts(client):
     first = await client.post(
         "/api/v1/auth/register",
@@ -390,6 +411,49 @@ async def test_magic_link_for_a_real_account_returns_202(auth, client):
     response = await client.post("/api/v1/auth/magic-link", json={"email": user["email"]})
     assert response.status_code == 202, response.text
     assert response.json()["message"]
+
+
+async def test_magic_link_is_never_returned_in_the_body_by_default(auth, client):
+    """A free deployment has no mail provider. The link comes back in the body
+    only when an operator explicitly asks for it, because doing so by default
+    would undo the enumeration guarantee the test above protects."""
+    user = await auth(display_name="Link Recipient")
+    response = await client.post("/api/v1/auth/magic-link", json={"email": user["email"]})
+    assert "demo_link" not in response.json()
+
+
+async def test_demo_mode_returns_the_link_for_a_real_account(auth, client, monkeypatch):
+    """Demo mode (DEMO_EXPOSE_MAGIC_LINKS) exists so a deployment with no mail
+    provider is still usable. It knowingly gives up the enumeration guarantee:
+    an address with an account gets a link, one without does not."""
+    from app.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "demo_expose_magic_links", True)
+    user = await auth(display_name="Link Recipient")
+    known = await client.post("/api/v1/auth/magic-link", json={"email": user["email"]})
+    unknown = await client.post("/api/v1/auth/magic-link", json={"email": "nobody@example.com"})
+    assert known.json()["demo_link"].startswith("http")
+    assert "demo_link" not in unknown.json()
+
+
+async def test_magic_link_points_back_at_the_tunnel_origin(auth, client, monkeypatch):
+    """Behind a Cloudflare Quick Tunnel the browser is on *.trycloudflare.com.
+    A link built from APP_URL (localhost) is unreachable from the visitor's
+    device; a forged Origin must not redirect links to another site."""
+    from app.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "demo_expose_magic_links", True)
+    user = await auth(display_name="Tunnel Visitor")
+    tunnel = "https://brave-otter-1234.trycloudflare.com"
+    via_tunnel = await client.post(
+        "/api/v1/auth/magic-link", json={"email": user["email"]}, headers={"Origin": tunnel}
+    )
+    assert via_tunnel.json()["demo_link"].startswith(f"{tunnel}/api/v1/auth/magic-link/verify?token=")
+
+    forged = await client.post(
+        "/api/v1/auth/magic-link", json={"email": user["email"]}, headers={"Origin": "https://evil.example"}
+    )
+    assert forged.json()["demo_link"].startswith(get_settings().app_url.rstrip("/"))
 
 
 async def test_magic_link_can_only_be_consumed_once_concurrently(auth, db):

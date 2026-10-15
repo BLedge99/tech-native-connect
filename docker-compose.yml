@@ -14,7 +14,7 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-bootcamp}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-bootcamp} -d ${POSTGRES_DB:-bootcamp_connect}"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -50,16 +50,19 @@ services:
     # decisions/0005-websocket-in-process.md.
     environment:
       DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://bootcamp:bootcamp@db:5432/bootcamp_connect}
-      SESSION_SECRET: ${SESSION_SECRET:-dev-only-change-me}
       APP_ENV: ${APP_ENV:-development}
       MAILPIT_SMTP_HOST: ${MAILPIT_SMTP_HOST:-mailpit}
       MAILPIT_SMTP_PORT: ${MAILPIT_SMTP_PORT:-1025}
       MAILPIT_WEB_URL: ${MAILPIT_WEB_URL:-http://localhost:8025}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173}
+      # The browser origin. Magic links are emailed and verified against this,
+      # not against the API port — a link minted on :8000 lands on a 404.
+      APP_URL: ${APP_URL:-http://localhost:5173}
       SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:-bootcamp-dev-admin}
       # Integration tests. Separate database from dev so a test run cannot
       # truncate the demo data. Set here so `docker compose exec backend pytest`
       # needs no extra flags.
+      DEMO_EXPOSE_MAGIC_LINKS: ${DEMO_EXPOSE_MAGIC_LINKS:-true}
       TEST_DATABASE_URL: ${TEST_DATABASE_URL:-postgresql+asyncpg://bootcamp:bootcamp@db:5432/bootcamp_connect_test}
     ports:
       - "8000:8000"
@@ -85,8 +88,16 @@ services:
     depends_on:
       - backend
 
-  # ─── Dev DB GUI ──────────────────────────────────────────────────────────
-  # Adminer — lightweight single-file Postgres GUI for development.
+  # ─── Cloudflare Tunnel ───────────────────────────────────────────────────
+  # Exposes the frontend (and proxied backend + WebSockets) to the web via
+  # a free Cloudflare Quick Tunnel (trycloudflare.com). No account required.
+  tunnel:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: tunnel --no-autoupdate --url http://frontend:5173
+    depends_on:
+      - frontend
+
   # ─── Dev DB GUI ──────────────────────────────────────────────────────────
   # Adminer — lightweight single-file Postgres GUI for development.
   #

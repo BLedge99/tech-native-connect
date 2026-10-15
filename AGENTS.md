@@ -14,7 +14,11 @@ developers who are studying alongside them on the same bootcamp.
 - **Team:** Ben, Joey, James, Alys, Mick
 - **Current phase:** all nine required features implemented, 2 October 2026
 
-**State.** 235 backend tests, 26 frontend component tests, 11 E2E tests pass.
+**Last recorded state.** The 11 Oct review run recorded 298 backend tests, 39
+frontend component tests, and 19 E2E tests passing. On 14 Oct, 39 frontend
+component tests and a production build passed after a temporary Windows
+dependency install, but they were not rerun after restoring the lockfile; see
+`handoff.md` §17.
 `tsc --noEmit` is clean. Every feature spec carries an *As built* section
 documenting its deviations; `roadmap.md` §Status summary has the totals and the
 two known gaps.
@@ -158,12 +162,50 @@ probe, so break them deliberately or not at all.
 
 ## 6. Running the stack
 
-```bash
-docker compose up --build     # full stack
-docker compose up -d db mailpit   # just infra, run apps on host for fast reload
-docker compose exec db psql -U bootcamp -d bootcamp_connect
-docker compose down -v        # reset, destroys data
+> **READ THIS BEFORE RUNNING ANY COMMAND.**
+>
+> This project runs entirely in Docker. Docker, Node.js and Python live
+> **inside the containers or inside WSL** — they are not installed on the
+> Windows host and **must not be installed, uninstalled, or "repaired" there.**
+> Previous agents have caused serious damage by failing to notice Docker runs
+> through the WSL backend and trying to fix a non-existent problem by
+> changing the host environment. If `docker info` fails in PowerShell, that
+> is expected — use `run.bat`, which detects WSL automatically.
+
+### The only supported way to run anything
+
+```powershell
+.\run.bat              # build + start everything (default)
+.\run.bat build        # build images only
+.\run.bat down         # stop services (keeps data)
+.\run.bat clean        # stop and delete all data
+.\run.bat logs         # follow logs
+.\run.bat panel        # open the dev panel
 ```
+
+`run.bat` works with Docker Desktop (Windows), Docker Desktop (WSL2 backend),
+and docker installed inside WSL. If `docker` fails on Windows it retries as
+`wsl docker` automatically.
+
+**Never run `pytest`, `npx`, `node` or `python` on the Windows host.** All
+tests run inside the containers:
+
+```powershell
+docker compose exec -T backend pytest tests -q           # backend suite
+docker compose exec -T frontend npx vitest run            # component tests
+docker compose exec -T frontend npx tsc --noEmit          # typecheck
+docker compose exec -T frontend npx playwright test       # E2E suite
+node scripts/check-no-mocking.mjs                         # no-network-mock guard
+```
+
+**After editing frontend source, restart the frontend container** — Vite HMR
+does not reliably pick up changes on this WSL/Windows setup:
+
+```powershell
+docker compose restart frontend
+```
+
+### Services
 
 | Service | URL |
 |---|---|
@@ -171,10 +213,22 @@ docker compose down -v        # reset, destroys data
 | Backend API | http://localhost:8000 |
 | API docs (Swagger) | http://localhost:8000/docs |
 | Mailpit inbox | http://localhost:8025 |
-| Postgres | localhost:5432 |
+| Adminer (DB GUI) | http://localhost:8080 |
+| Dev panel | http://localhost:5173/dev |
 
 Vite proxies `/api` and `/ws` to the backend, so the frontend only ever calls
 same-origin paths. Do not hardcode `localhost:8000` in frontend code.
+
+### Two stacks — do not confuse them
+
+| | Dev stack | Production build |
+|---|---|---|
+| Entry point | `docker-compose.yml` | `Dockerfile` |
+| Command | `./run.bat` | Render Blueprint (`render.yaml`) |
+| Shape | 4 containers | 1 image: FastAPI serves the built SPA |
+| Branches | `main`, `ben-test`, feature branches | `web-deploy` only |
+
+See [`docs/deploy.md`](docs/deploy.md) for the full deployment guide.
 
 ---
 
@@ -203,7 +257,6 @@ POSTGRES_USER=bootcamp
 POSTGRES_PASSWORD=bootcamp
 POSTGRES_DB=bootcamp_connect
 DATABASE_URL=postgresql+asyncpg://bootcamp:bootcamp@db:5432/bootcamp_connect
-SESSION_SECRET=change-me
 MAILPIT_SMTP_HOST=mailpit
 MAILPIT_SMTP_PORT=1025
 MAILPIT_WEB_URL=http://localhost:8025

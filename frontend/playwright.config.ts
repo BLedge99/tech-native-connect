@@ -7,6 +7,9 @@ import { defineConfig, devices } from '@playwright/test'
  */
 export default defineConfig({
   testDir: './tests',
+  // zz-deploy-check is a manual deploy verification, not part of the demo
+  // suite. It doubles the E2E runtime and needs a running deployment.
+  testIgnore: 'zz-deploy-check.spec.ts',
   // Clears accumulated test users before the run. Without it the suite goes
   // flaky after a few runs, which reads as an app bug and is not one.
   globalSetup: './tests/global-setup.ts',

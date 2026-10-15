@@ -103,16 +103,14 @@ def match_out(item) -> MatchOut:
     from app.services.match_service import to_view
 
     view = to_view(item.user, item.user.profile)
-    shared_ids = set()
-    for name in item.shared_skill_names:
-        for sid, skill_name in view.skills:
-            if skill_name == name:
-                shared_ids.add(sid)
+    # By ID, never by name. Two skills can share a name — the review found a
+    # match card claiming a shared skill the two people did not both hold.
+    shared = set(item.shared_skill_ids)
     return MatchOut(
         user=user_public(item.user),
         score=item.score,
         reasons=item.reasons,
-        shared_skills=[RefOut(id=i, name=n) for i, n in view.skills if i in shared_ids],
+        shared_skills=[RefOut(id=i, name=n) for i, n in view.skills if i in shared],
         connection_state=item.connection_state,
     )
 

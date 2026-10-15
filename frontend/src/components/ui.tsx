@@ -1,7 +1,8 @@
 /** Shared presentational primitives. No component library — specs/00 §7 rule 7. */
 
 import type { ReactNode } from 'react'
-import { Link } from 'react-router-dom'
+import { useState } from 'react'
+import { Link, useLocation } from 'react-router-dom'
 import type { UserSummary } from '../api/types'
 import { useSession } from '../hooks/session'
 import { NotificationBell } from './Notifications'
@@ -135,45 +136,82 @@ export function RoleBadge({ role }: { role: string | null }) {
 
 export function Shell({ children }: { children: ReactNode }) {
   const { user, logout } = useSession()
+  const location = useLocation()
+  const [menuOpen, setMenuOpen] = useState(false)
+
+  const links = [
+    ['/matches', 'Matches'],
+    ['/connections', 'Connections'],
+    ['/messages', 'Messages'],
+    ['/ideas', 'Ideas'],
+    ['/profile', 'Profile'],
+    ...(user?.is_admin ? [['/admin', 'Admin']] : []),
+  ] as const
 
   return (
-    <div className="min-h-full">
-      <header className="border-b border-slate-200 bg-white">
-        <div className="mx-auto flex max-w-5xl items-center justify-between gap-4 px-4 py-3">
-          <Link to="/" className="text-lg font-bold text-brand-700">
-            Bootcamp Connect
+    <div className="min-h-full terminal-app">
+      <header className="terminal-header border-b border-slate-200 bg-white">
+        <div className="terminal-topline" aria-hidden="true">
+          <span>BOOTCAMP CONNECT <span aria-hidden="true">/</span> COHORT CONSOLE</span>
+          <span><i /> NETWORK READY</span>
+        </div>
+        <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-4 py-3">
+          <Link to="/" className="terminal-brand text-lg font-bold text-brand-700" onClick={() => setMenuOpen(false)}>
+            <span className="terminal-brand-mark" aria-hidden="true">BC</span>
+            <span>Bootcamp Connect</span>
           </Link>
           {user && (
-            <nav aria-label="Main" className="flex items-center gap-4 text-sm">
-              <Link to="/matches" className="text-slate-600 hover:text-slate-900">
-                Matches
-              </Link>
-              <Link to="/connections" className="text-slate-600 hover:text-slate-900">
-                Connections
-              </Link>
-              <Link to="/messages" className="text-slate-600 hover:text-slate-900">
-                Messages
-              </Link>
-              <Link to="/ideas" className="text-slate-600 hover:text-slate-900">
-                Ideas
-              </Link>
-              <Link to="/profile" className="text-slate-600 hover:text-slate-900">
-                Profile
-              </Link>
-              {user.is_admin && (
-                <Link to="/admin" className="text-slate-600 hover:text-slate-900">
-                  Admin
-                </Link>
-              )}
-              <NotificationBell />
-              <button onClick={() => void logout()} className="text-slate-600 hover:text-slate-900">
-                Log out
+            <>
+              <button
+                type="button"
+                className="terminal-menu-toggle"
+                aria-label={menuOpen ? 'Close navigation' : 'Open navigation'}
+                aria-expanded={menuOpen}
+                aria-controls="primary-navigation"
+                onClick={() => setMenuOpen((open) => !open)}
+              >
+                <span />
+                <span />
+                <span className="sr-only">Menu</span>
               </button>
-            </nav>
+              <nav
+                id="primary-navigation"
+                aria-label="Main"
+                className={`terminal-nav text-sm ${menuOpen ? 'is-open' : ''}`}
+              >
+                {links.map(([to, label]) => {
+                  const active = to === '/admin'
+                    ? location.pathname.startsWith('/admin')
+                    : to === '/ideas'
+                      ? location.pathname.startsWith('/ideas')
+                      : location.pathname === to || (to === '/messages' && location.pathname.startsWith('/messages/'))
+                  return (
+                    <Link
+                      key={to}
+                      to={to}
+                      aria-current={active ? 'page' : undefined}
+                      className={`terminal-nav-link ${active ? 'is-active' : ''}`}
+                      onClick={() => setMenuOpen(false)}
+                    >
+                      <span className="terminal-nav-prefix" aria-hidden="true">{active ? '›' : '/'}</span>
+                      {label}
+                    </Link>
+                  )
+                })}
+                <span className="terminal-nav-divider" aria-hidden="true" />
+                <NotificationBell />
+                <button
+                  onClick={() => void logout()}
+                  className="terminal-nav-link terminal-logout"
+                >
+                Log out
+                </button>
+              </nav>
+            </>
           )}
         </div>
       </header>
-      <main className="mx-auto max-w-5xl px-4 py-6">{children}</main>
+      <main className="terminal-main mx-auto max-w-6xl px-4 py-8">{children}</main>
     </div>
   )
 }

@@ -19,6 +19,8 @@ import {
   type ReactNode,
 } from 'react'
 
+import { useSession } from './session'
+
 export type SocketStatus = 'connecting' | 'open' | 'closed'
 
 export interface SocketFrame {
@@ -53,7 +55,13 @@ export function useSocket(): WebSocketValue {
 
 const RECONNECT_STEPS_MS = [1_000, 2_000, 4_000, 8_000, 16_000, 30_000]
 
+/** The server's answer when there is no session to authenticate the handshake.
+ *  Retrying that is pointless: nothing about the page changes it. */
+const UNAUTHENTICATED = 4001
+const REVOKED = 4003
+
 export function WebSocketProvider({ children }: { children: ReactNode }) {
+  const { user } = useSession()
   const [status, setStatus] = useState<SocketStatus>('connecting')
   const socketRef = useRef<WebSocket | null>(null)
   const attempts = useRef(0)
@@ -110,10 +118,14 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
       }
     }
 
-    socket.onclose = () => {
+    socket.onclose = (event) => {
       socketRef.current = null
       emitStatus('closed')
       if (stopped.current) return
+      // Retrying a handshake the server refused for lack of a session means the
+      // public landing page opens a socket, gets rejected, and retries forever
+      // at up to 30s intervals. Stop; the effect re-runs when there is a user.
+      if (event.code === UNAUTHENTICATED || event.code === REVOKED) return
       // Exponential backoff, capped, with jitter. Retry indefinitely — this is a
       // demo and giving up is worse than retrying.
       const step = RECONNECT_STEPS_MS[Math.min(attempts.current, RECONNECT_STEPS_MS.length - 1)]
@@ -126,6 +138,18 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
   }, [emitStatus])
 
   useEffect(() => {
+    // B19. No socket without a session. A signed-out visitor on the landing
+    // page used to open one, be refused with 4001, and retry forever.
+    //
+    // `stopped` stays true on the signed-out path so the close() below lands in
+    // onclose with the reconnect suppressed. Clearing it first scheduled one
+    // more socket, which then got refused after a backoff delay.
+    if (!user) {
+      stopped.current = true
+      if (timerRef.current) window.clearTimeout(timerRef.current)
+      socketRef.current?.close()
+      return
+    }
     stopped.current = false
     connect()
     return () => {
@@ -133,7 +157,7 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
       if (timerRef.current) window.clearTimeout(timerRef.current)
       socketRef.current?.close()
     }
-  }, [connect])
+  }, [connect, user?.id])
 
   const subscribe = useCallback(
     (threadId: string) => {

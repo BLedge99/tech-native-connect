@@ -63,12 +63,6 @@ async def require_participant(
     return thread, request
 
 
-async def can_access(
-    db: AsyncSession, user_a: uuid.UUID, user_b: uuid.UUID
-) -> ConnectionRequest | None:
-    return await accepted_request(db, user_a, user_b)
-
-
 async def get_or_create_thread(
     db: AsyncSession, request: ConnectionRequest
 ) -> Thread:
@@ -210,6 +204,33 @@ async def unread_count(db: AsyncSession, thread_id: uuid.UUID, user_id: uuid.UUI
     return await db.scalar(stmt) or 0
 
 
+async def unread_total(db: AsyncSession, user_id: uuid.UUID) -> int:
+    """Unread across EVERY thread, in one query.
+
+    `/connections/summary` hardcoded this to 0, so the nav badge could never be
+    right and nothing noticed: specs/05 §237 documents a real count and no
+    screen read the field.
+    """
+    stmt = (
+        select(func.count())
+        .select_from(Message)
+        .join(Thread, Thread.id == Message.thread_id)
+        .join(ConnectionRequest, ConnectionRequest.id == Thread.connection_request_id)
+        .outerjoin(
+            ReadReceipt,
+            and_(ReadReceipt.thread_id == Thread.id, ReadReceipt.user_id == user_id),
+        )
+        .where(
+            (ConnectionRequest.sender_id == user_id)
+            | (ConnectionRequest.receiver_id == user_id),
+            ConnectionRequest.status == ConnectionStatus.ACCEPTED,
+            Message.sender_id != user_id,
+            or_(ReadReceipt.last_read_at.is_(None), Message.created_at > ReadReceipt.last_read_at),
+        )
+    )
+    return await db.scalar(stmt) or 0
+
+
 async def mark_read(
     db: AsyncSession, thread_id: uuid.UUID, user_id: uuid.UUID
 ) -> datetime:
@@ -239,18 +260,6 @@ async def list_messages(
         )
     result = await db.execute(
         stmt.order_by(Message.created_at.desc(), Message.id.desc()).limit(limit)
-    )
-    return list(result.scalars().all())
-
-
-async def messages_after(
-    db: AsyncSession, thread_id: uuid.UUID, since: datetime, *, limit: int = 500
-) -> list[Message]:
-    result = await db.execute(
-        select(Message)
-        .where(Message.thread_id == thread_id, Message.created_at > since)
-        .order_by(Message.created_at.asc(), Message.id.asc())
-        .limit(limit)
     )
     return list(result.scalars().all())
 
@@ -318,9 +327,9 @@ __all__ = [
     "list_threads",
     "other_party",
     "unread_count",
+    "unread_total",
     "mark_read",
     "list_messages",
-    "messages_after",
     "send_message",
     "serialize_message",
 ]

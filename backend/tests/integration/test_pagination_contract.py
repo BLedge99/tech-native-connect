@@ -62,16 +62,27 @@ DESCRIPTION = (
 )
 
 
+# `/matches` returns MatchOut, whose id lives under `user`. Every other family
+# is a bare row with a top-level `id`. MatchOut has never carried a top-level id
+# and adding one would be an API change for no user, so the walk is told where
+# to look instead.
+def item_id(family: str):
+    if family == "matches":
+        return lambda item: item["user"]["id"]
+    return lambda item: item["id"]
+
+
 # ─── The walk ────────────────────────────────────────────────────────────────
 
 
-async def walk(client, path: str, limit: int = 1) -> tuple[list[str], int]:
+async def walk(client, path: str, family: str, limit: int = 1) -> tuple[list[str], int]:
     """Page `path` until next_cursor is None. Returns (ids, page_count).
 
     A hard page ceiling: a cursor that never terminates is a bug, and the
     ceiling turns that into a readable assertion failure instead of a hung
     test run.
     """
+    id_of = item_id(family)
     ids: list[str] = []
     cursor: str | None = None
     pages = 0
@@ -80,7 +91,7 @@ async def walk(client, path: str, limit: int = 1) -> tuple[list[str], int]:
         response = await client.get(f"{path}{query}")
         assert response.status_code == 200, f"{path}{query} -> {response.status_code}: {response.text}"
         body = response.json()
-        ids.extend(item["id"] for item in body["items"])
+        ids.extend(id_of(item) for item in body["items"])
         pages += 1
         cursor = body.get("next_cursor")
         if cursor is None:
@@ -177,7 +188,10 @@ async def _seed(auth, family: str, count: int = ROWS):
                     json={"name": f"Skill{index}"},
                     headers=admin["csrf"],
                 )
-                assert response.status_code == 201, response.text
+                # Reference-data creates answer 200 (test_admin.py pins it, and
+                # specs/09 §5 does not name a status). The point is that it
+                # succeeded, not which success code it used.
+                assert response.status_code in (200, 201), response.text
         else:
             for index in range(count):
                 response = await admin["client"].post(
@@ -185,7 +199,7 @@ async def _seed(auth, family: str, count: int = ROWS):
                     json={"name": f"{kind.title()} {index}"},
                     headers=admin["csrf"],
                 )
-                assert response.status_code == 201, response.text
+                assert response.status_code in (200, 201), response.text
         return admin, f"/api/v1/admin/{kind}"
 
     raise AssertionError(f"no seeding defined for {family}")
@@ -215,13 +229,13 @@ async def test_every_list_family_pages_to_exhaustion_without_repeats(
         "test created — the seeding is wrong, so pagination is not being measured"
     )
 
-    walked, pages = await walk(session["client"], path, limit=1)
+    walked, pages = await walk(session["client"], path, family, limit=1)
 
     assert len(set(walked)) == len(walked), (
         f"{path} repeated a row across pages: "
         f"{len(walked) - len(set(walked))} duplicate(s)"
     )
-    assert walked == [item["id"] for item in full["items"]], (
+    assert walked == [item_id(family)(item) for item in full["items"]], (
         f"{path} paged order differs from the unpaged order — rows were skipped "
         f"or reordered (walked {len(walked)} of {len(full['items'])})"
     )
@@ -239,6 +253,7 @@ async def test_every_list_family_accepts_its_own_valid_cursor(auth, seeded_refs,
     fails to *decode*. This closes that gap by round-tripping a real one.
     """
     session, path = await _seed(auth, family)
+    id_of = item_id(family)
 
     first = (await session["client"].get(f"{path}?limit=1")).json()
     cursor = first.get("next_cursor")
@@ -251,7 +266,7 @@ async def test_every_list_family_accepts_its_own_valid_cursor(auth, seeded_refs,
         f"{path} returned {len(items)} rows on page 2, expected 1 — the cursor "
         "filtered out everything, which is the B1 failure mode"
     )
-    assert items[0]["id"] not in {item["id"] for item in first["items"]}
+    assert id_of(items[0]) not in {id_of(item) for item in first["items"]}
 
 
 async def test_matches_pages_tied_scores_without_skipping_anyone(auth, seeded_refs):
@@ -286,8 +301,8 @@ async def test_matches_pages_tied_scores_without_skipping_anyone(auth, seeded_re
     )
 
     # 1. End to end through HTTP: paging must reach every tied candidate.
-    walked, _pages = await walk(viewer["client"], "/api/v1/matches", limit=2)
-    expected = {user.id for user in created}
+    walked, _pages = await walk(viewer["client"], "/api/v1/matches", "matches", limit=2)
+    expected = {user["id"] for user in created}
     assert set(walked) == expected, (
         f"paging returned {len(walked)} of {len(expected)} candidates — cursor "
         "pagination dropped the rest"
@@ -399,7 +414,7 @@ async def test_paging_reference_data_drops_nothing_a_profile_uses(auth, seeded_r
             "/api/v1/admin/skills", json={"name": f"Paged {index}"}, headers=admin["csrf"]
         )
 
-    walked, _pages = await walk(admin["client"], "/api/v1/admin/skills", limit=1)
+    walked, _pages = await walk(admin["client"], "/api/v1/admin/skills", "admin/skills", limit=1)
 
     public = (await admin["client"].get("/api/v1/skills")).json()
     assert set(walked) == {skill["id"] for skill in public}, (

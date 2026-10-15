@@ -27,7 +27,10 @@ async def list_ideas(
     author_id: uuid.UUID | None = None,
     mine: bool = False,
     open_only: bool = True,
-    limit: int = Query(default=20, ge=1, le=50),
+    # Cap 100: specs/00_conventions.md §5 sets one page ceiling for every list
+    # endpoint. This one was 50, so `?limit=100` 422'd and the board could not
+    # be asked for the whole set.
+    limit: int = Query(default=20, ge=1, le=100),
     cursor: str | None = None,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -110,15 +113,12 @@ async def get_idea(
 ):
     idea = await svc.get_idea(db, idea_id)
     author = await db.get(User, idea.author_id)
-    rows = await svc.list_ideas(
-        db, categories=[idea.category], open_only=False, viewer_id=user.id, limit=200
-    )
-    found = next(((i, c, m) for i, c, m in rows if i.id == idea.id), (idea, 0, False))
+    count, has_interested = await svc.interest_summary(db, idea.id, user.id)
     course_name = None
     if idea.course_id:
         course_name = await db.scalar(select(Course.name).where(Course.id == idea.course_id))
-    return idea_out(found[0], author, interest_count=found[1],
-                    viewer_has_interested=found[2], course_name=course_name)
+    return idea_out(idea, author, interest_count=count,
+                    viewer_has_interested=has_interested, course_name=course_name)
 
 
 @router.patch("/{idea_id}", response_model=IdeaOut, dependencies=[Depends(require_csrf)])

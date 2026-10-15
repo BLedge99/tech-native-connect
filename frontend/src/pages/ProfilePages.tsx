@@ -174,7 +174,10 @@ export function ProfileEditPage() {
 
       {banner && (
         <p
-          role="status"
+          // An error has to be announced; `role="status"` is a polite live
+          // region and a screen reader may not speak it until the user stops
+          // typing. Success messages do not need that.
+          role={banner.kind === 'error' ? 'alert' : 'status'}
           className={`rounded-lg p-3 text-sm ${
             banner.kind === 'ok' ? 'bg-green-50 text-green-800' : 'bg-red-50 text-red-700'
           }`}

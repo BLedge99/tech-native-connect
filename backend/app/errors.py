@@ -77,6 +77,21 @@ class UnsupportedMediaType(AppError):
     """That file type is not supported."""
 
 
+class TooManyRequests(AppError):
+    status_code = 429
+    code = "rate_limited"
+    """Too many attempts. Try again shortly."""
+
+    def __init__(
+        self,
+        message: str = "Too many attempts. Try again shortly.",
+        *,
+        retry_after: int = 60,
+    ) -> None:
+        self.retry_after = retry_after
+        super().__init__(message)
+
+
 class ValidationFailed(AppError):
     status_code = 422
     code = "validation_error"
@@ -174,11 +189,6 @@ class LastAdmin(Conflict):
     code = "last_admin"
 
 
-class InUseConflict(Conflict):
-    code = "skill_in_use"
-    """That is in use. Rename it instead."""
-
-
 def error_body(code: str, message: str, fields: dict | None = None) -> dict:
     body: dict[str, Any] = {"error": {"code": code, "message": message}}
     if fields:
@@ -187,9 +197,13 @@ def error_body(code: str, message: str, fields: dict | None = None) -> dict:
 
 
 async def app_error_handler(_request, exc: AppError) -> JSONResponse:
+    headers = {}
+    if isinstance(exc, TooManyRequests):
+        headers["Retry-After"] = str(exc.retry_after)
     return JSONResponse(
         status_code=exc.status_code,
         content=error_body(exc.code, exc.message, exc.fields),
+        headers=headers,
     )
 
 

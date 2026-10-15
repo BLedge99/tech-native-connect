@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import base64
 
-from fastapi import APIRouter, Depends, Response
+from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -17,11 +17,13 @@ from app.dependencies import (
     require_csrf,
 )
 from app.errors import BadRequest
+from app.origins import browser_base_url
 from app.models import Session
 from app.schemas import LoginRequest, MagicLinkRequest, RegisterRequest
 from app.serializers import user_private
 from app.services import auth as auth_svc
 from app.services.mailer import send_magic_link
+from app.services.rate_limit import auth_rate_limiter
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 
@@ -44,6 +46,12 @@ async def register(
     payload: RegisterRequest,
     db: AsyncSession = Depends(get_db),
 ):
+    auth_rate_limiter.check(
+        "register",
+        auth_svc.normalise_email(payload.email),
+        limit=20,
+        window_seconds=3600,
+    )
     user = await auth_svc.register_user(
         db,
         email=payload.email,
@@ -67,6 +75,12 @@ async def register(
 
 @router.post("/login")
 async def login(payload: LoginRequest, db: AsyncSession = Depends(get_db)):
+    auth_rate_limiter.check(
+        "login",
+        auth_svc.normalise_email(payload.email),
+        limit=20,
+        window_seconds=60,
+    )
     user = await auth_svc.authenticate(db, email=payload.email, password=payload.password)
     token, session_row = await auth_svc.create_session(db, user)
     await db.commit()
@@ -97,24 +111,50 @@ async def logout(
 
 
 @router.post("/magic-link", status_code=202)
-async def magic_link(payload: MagicLinkRequest, db: AsyncSession = Depends(get_db)):
+async def magic_link(
+    payload: MagicLinkRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
     """Always 202, whether or not the email exists. A 404 here turns this
     endpoint into an account-enumeration oracle."""
     settings = get_settings()
+    # Unauthenticated and it sends mail: without a cap it is a queue for
+    # spamming one person's inbox, and it was.
+    auth_rate_limiter.check(
+        "magic-link",
+        auth_svc.normalise_email(payload.email),
+        limit=5,
+        window_seconds=60,
+    )
     user = await auth_svc.get_user_by_email(db, payload.email)
+    body = {"message": "If that address has an account, a sign-in link is on its way."}
     if user is not None and user.is_active:
         token = await auth_svc.issue_magic_link(db, user)
-        link = auth_svc.magic_link_url(token, f"http://localhost:8000")
+        # The link goes back to the origin the user asked from (e.g. the
+        # Cloudflare tunnel URL), not APP_URL, which is localhost and
+        # unreachable from anyone else's device. Untrusted origins fall back.
+        base_url = browser_base_url(
+            request.headers.get("origin"), settings.cors_origin_list, settings.app_url
+        )
+        link = auth_svc.magic_link_url(token, base_url)
         await send_magic_link(user.email, link)
         await db.commit()
-    return _json(
-        {"message": "If that address has an account, a sign-in link is on its way."},
-        status=202,
-    )
+        # Only in demo mode, and only for an account that exists — which is
+        # exactly the enumeration this endpoint otherwise refuses to do.
+        if settings.demo_expose_magic_links:
+            body["demo_link"] = link
+    return _json(body, status=202)
 
 
 @router.get("/magic-link/verify")
 async def magic_link_verify(token: str, db: AsyncSession = Depends(get_db)):
+    auth_rate_limiter.check(
+        "magic-link-verify",
+        token,
+        limit=10,
+        window_seconds=15 * 60,
+    )
     try:
         padding = "=" * (-len(token) % 4)
         raw = base64.urlsafe_b64decode(token + padding)
@@ -125,7 +165,8 @@ async def magic_link_verify(token: str, db: AsyncSession = Depends(get_db)):
     session_token, _session = await auth_svc.create_session(db, user)
     await db.commit()
 
-    # 302 back into the app. The cookie is set on the redirect response.
+    # 302 back into the APP. A relative redirect preserves the request's origin
+    # (whether localhost or Cloudflare tunnel), and sets the cookie on that origin.
     response = RedirectResponse(url="/", status_code=302)
     set_session_cookie(response, session_token)
     return response

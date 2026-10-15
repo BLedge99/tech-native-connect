@@ -172,6 +172,7 @@ export function RegisterPage() {
 export function MagicLinkPage() {
   const [email, setEmail] = useState('')
   const [sent, setSent] = useState(false)
+  const [demoLink, setDemoLink] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
   const submit = async (e: React.FormEvent) => {
@@ -179,7 +180,9 @@ export function MagicLinkPage() {
     setBusy(true)
     try {
       // Always 202, whether or not the address exists.
-      await authApi.requestMagicLink(email)
+      const result = await authApi.requestMagicLink(email)
+      // Only present when the deployment runs with DEMO_EXPOSE_MAGIC_LINKS.
+      setDemoLink(result.demo_link ?? null)
       setSent(true)
     } finally {
       setBusy(false)
@@ -191,14 +194,28 @@ export function MagicLinkPage() {
       {sent ? (
         <div className="space-y-4 text-sm text-slate-600">
           <p>If that address has an account, a link is on its way.</p>
-          <p className="rounded-lg bg-slate-100 p-3 text-xs">
-            Development shortcut: no email is actually sent. The link appears in
-            Mailpit at{' '}
-            <a href="http://localhost:8025" className="underline" target="_blank" rel="noreferrer">
-              localhost:8025
-            </a>
-            .
-          </p>
+          {demoLink ? (
+            <div className="space-y-2 rounded-lg bg-amber-50 p-3 text-xs text-amber-900">
+              <p className="font-semibold">
+                Demo mode: email delivery is disabled, so the link is here.
+              </p>
+              <a
+                href={demoLink.replace(/^https?:\/\/[^/]+/, window.location.origin)}
+                className="block break-all underline"
+              >
+                {demoLink.replace(/^https?:\/\/[^/]+/, window.location.origin)}
+              </a>
+            </div>
+          ) : (
+            <p className="rounded-lg bg-slate-100 p-3 text-xs">
+              Development shortcut: no email is actually sent. The link appears in
+              Mailpit at{' '}
+              <a href="http://localhost:8025" className="underline" target="_blank" rel="noreferrer">
+                localhost:8025
+              </a>
+              .
+            </p>
+          )}
           <Link to="/login" className="text-brand-600 underline">
             Back to log in
           </Link>

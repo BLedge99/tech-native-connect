@@ -301,11 +301,6 @@ class AdminOverview(BaseModel):
     project_ideas: int
 
 
-class ResolveReportRequest(BaseModel):
-    status: str
-    resolution: str | None = Field(default=None, max_length=200)
-
-
 class Page(BaseModel):
     """Cursor pagination envelope. specs/00_conventions.md §5."""
 

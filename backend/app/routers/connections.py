@@ -49,6 +49,47 @@ async def _other(db: AsyncSession, request: ConnectionRequest, viewer_id: uuid.U
     return user
 
 
+async def _others(
+    db: AsyncSession, requests: list[ConnectionRequest], viewer_id: uuid.UUID
+) -> dict[uuid.UUID, User]:
+    """Every other party for a whole page, in one query.
+
+    `_other` per row is what made this endpoint O(rows) in queries: a 20-row
+    page issued two statements per row.
+    """
+    ids = {
+        r.receiver_id if r.sender_id == viewer_id else r.sender_id for r in requests
+    }
+    if not ids:
+        return {}
+    from app.models import Profile
+
+    rows = await db.scalars(
+        select(User)
+        .options(selectinload(User.profile).selectinload(Profile.course))
+        .where(User.id.in_(ids))
+    )
+    return {u.id: u for u in rows}
+
+
+async def _thread_ids(
+    db: AsyncSession, requests: list[ConnectionRequest]
+) -> dict[uuid.UUID, uuid.UUID]:
+    """request id -> thread id, for a whole page, in one query."""
+    ids = [r.id for r in requests]
+    if not ids:
+        return {}
+    return dict(
+        (
+            await db.execute(
+                select(Thread.connection_request_id, Thread.id).where(
+                    Thread.connection_request_id.in_(ids)
+                )
+            )
+        ).all()
+    )
+
+
 @router.post("", status_code=201, response_model=ConnectionOut, dependencies=[Depends(require_csrf)])
 async def send_connection(
     payload: SendConnectionRequest,
@@ -81,17 +122,17 @@ async def list_connections(
     )
     has_more = len(requests) > limit
     requests = requests[:limit]
-    out = []
-    for request in requests:
-        other = await _other(db, request, user.id)
-        out.append(
-            connection_out(
-                request,
-                user.id,
-                other,
-                thread_id=await _thread_id(db, request.id),
-            )
+    others = await _others(db, requests, user.id)
+    thread_ids = await _thread_ids(db, requests)
+    out = [
+        connection_out(
+            request,
+            user.id,
+            others[request.receiver_id if request.sender_id == user.id else request.sender_id],
+            thread_id=thread_ids.get(request.id),
         )
+        for request in requests
+    ]
     return Page(
         items=out,
         next_cursor=(
@@ -135,7 +176,9 @@ async def connection_summary(
 ):
     """One call for nav badges, so they cannot disagree with the list."""
     data = await svc.summary(db, user.id)
-    return ConnectionSummary(unread_messages=0, **data)
+    from app.services.messaging import unread_total
+
+    return ConnectionSummary(unread_messages=await unread_total(db, user.id), **data)
 
 
 @router.get("/{request_id}", response_model=ConnectionOut)

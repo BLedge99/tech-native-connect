@@ -16,6 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.config import get_settings
 from app.db import SessionLocal, get_db
 from app.dependencies import (
     SESSION_COOKIE,
@@ -149,10 +150,22 @@ async def unread_count(
 ws_router = APIRouter()
 
 
+from app.origins import is_allowed_origin  # noqa: E402  (re-exported for tests)
+
+
 @ws_router.websocket("/api/v1/ws")
 async def websocket_endpoint(websocket: WebSocket) -> None:
     """Session cookie authenticates the handshake. No token in the query
     string — that leaks into logs and Referer headers."""
+    # Cross-site WebSocket hijacking. `SameSite=Lax` already blocks the obvious
+    # attack today, which is exactly why relying on it alone is a trap: one
+    # unrelated change to SameSite makes it exploitable. Closing before
+    # `accept()` answers the handshake with an HTTP 403.
+    origin = websocket.headers.get("origin")
+    if origin is not None and not is_allowed_origin(origin, get_settings().cors_origin_list):
+        await websocket.close(code=1008)
+        return
+
     token = decode_cookie(websocket.cookies.get(SESSION_COOKIE))
     async with SessionLocal() as db:
         pair = await auth_svc.load_session(db, token)
@@ -162,7 +175,8 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         session, user = pair
 
     await websocket.accept()
-    await manager.connect_user(user.id, websocket)
+    # Bound to the session, not just the user: revocation can then close it.
+    await manager.connect_user(user.id, websocket, session_id=session.id)
     subscribed: set[uuid.UUID] = set()
 
     try:

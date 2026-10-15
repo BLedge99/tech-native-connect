@@ -144,7 +144,7 @@ the method.
 | Python var/function | `snake_case` | `def score_match(...)` |
 | React component | `PascalCase` | `ProfileCard.tsx` |
 | Hook | `useX` | `useMatches()` |
-| Env var | `UPPER_SNAKE` | `SESSION_SECRET` |
+| Env var | `UPPER_SNAKE` | `APP_ENV` |
 | Migration | Alembic-generated, never hand-named | — |
 
 ### Endpoints reserved for each feature
@@ -384,7 +384,7 @@ other party with `db.get(...)`, never by attribute access on a relationship.
 
 ### 13.5 §10 tests
 
-230 backend tests, 26 frontend component tests, 11 E2E tests. Every `AGENTS.md`
+240 backend tests, 39 frontend component tests, 11 E2E tests. Every `AGENTS.md`
 §5 rule has at least one integration test, which is what §10 asks for.
 
 The E2E suite has a **global setup** that deletes non-seed users before each

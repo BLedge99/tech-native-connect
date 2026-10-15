@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Depends, File, Response, UploadFile
+from fastapi import APIRouter, Depends, File, Request, Response, UploadFile
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -16,8 +17,8 @@ from app.dependencies import (
     require_profile_complete,
     require_session,
 )
-from app.errors import NotFound
-from app.models import Course, Interest, Session, Skill, User
+from app.errors import NotFound, PayloadTooLarge
+from app.models import Course, Interest, Profile, Session, Skill, User
 from app.schemas import (
     CourseOut,
     RefOut,
@@ -32,15 +33,6 @@ from app.services import profiles as prof_svc
 router = APIRouter(prefix="/api/v1", tags=["users"])
 
 
-def eager(user: User) -> User:
-    for attr in ("profile",):
-        setattr(user, attr, getattr(user, attr, None))
-    if user.profile is not None:
-        for rel in ("skills", "interests", "course"):
-            getattr(user.profile, rel)
-    return user
-
-
 class MeOut(UserPrivate):
     """Own account plus the CSRF token the client needs for mutating requests.
 
@@ -49,6 +41,34 @@ class MeOut(UserPrivate):
     """
 
     csrf_token: str
+
+
+# Multipart overhead (boundaries, the part headers) sits on top of the file, so
+# the raw body is always a little larger than the cap. Allow a small margin.
+_UPLOAD_OVERHEAD_BYTES = 8 * 1024
+
+
+async def reject_oversized_body(request: Request) -> None:
+    """413 on an oversized body before the multipart parser spools it to disk.
+
+    Reading at most cap+1 bytes in the handler bounds the buffer this route
+    *keeps*, but Starlette has already parsed and spooled the whole upload by
+    then. Checking the declared length up front is what actually stops the
+    request. A missing or unparseable Content-Length is left to the handler,
+    which spools to disk rather than memory and is bounded either way.
+    """
+    raw = request.headers.get("content-length")
+    if raw is None:
+        return
+    try:
+        length = int(raw)
+    except ValueError:
+        return
+    limit = get_settings().max_photo_bytes + _UPLOAD_OVERHEAD_BYTES
+    if length > limit:
+        raise PayloadTooLarge(
+            f"Photos must be under {get_settings().max_photo_bytes // (1024 * 1024)} MB."
+        )
 
 
 @router.get("/users/me", response_model=MeOut)
@@ -81,14 +101,17 @@ async def update_me(
     return user_private(user, profile)
 
 
-@router.post("/users/me/photo", dependencies=[Depends(require_csrf)])
+@router.post("/users/me/photo", dependencies=[Depends(require_csrf), Depends(reject_oversized_body)])
 async def upload_photo(
     file: UploadFile = File(...),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    data = await file.read()
-    await prof_svc.save_photo(db, user, data=data, declared_type=file.content_type)
+    # Read at most one byte past the cap. `await file.read()` buffered the whole
+    # body into memory and only then compared lengths, so a client could make the
+    # process hold any size upload regardless of what it was allowed to keep.
+    data = await file.read(get_settings().max_photo_bytes + 1)
+    await prof_svc.save_photo(db, user, data=data)
     return {"ok": True, "photo_url": f"/api/v1/users/{user.id}/photo"}
 
 
@@ -115,8 +138,6 @@ async def public_profile(
     _me: User = Depends(get_current_user),
 ):
     """No email. Deactivated users 404 rather than showing a ghost profile."""
-    from app.models import Profile
-
     result = await db.execute(
         select(User)
         .options(
@@ -173,8 +194,6 @@ async def list_skills(
     db: AsyncSession = Depends(get_db),
     _me: User = Depends(get_current_user),
 ):
-    from sqlalchemy import select
-
     stmt = select(Skill).order_by(Skill.name)
     if q:
         stmt = stmt.where(Skill.name.ilike(f"%{q.strip()}%"))
@@ -185,15 +204,12 @@ async def list_skills(
 async def list_interests(
     q: str | None = None,
     db: AsyncSession = Depends(get_db),
-    _me: User = Depends(get_current_user)):
-    from sqlalchemy import select
-
+    _me: User = Depends(get_current_user),
+):
     stmt = select(Interest).order_by(Interest.name)
     if q:
         stmt = stmt.where(Interest.name.ilike(f"%{q.strip()}%"))
     return [RefOut(id=i.id, name=i.name) for i in await db.scalars(stmt.limit(200))]
 
-
-from sqlalchemy import select  # noqa: E402
 
 __all__ = ["router"]

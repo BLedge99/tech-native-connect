@@ -23,7 +23,14 @@
 
 import { expect, test, type BrowserContext, type Page } from '@playwright/test'
 import { closeDb, messageBodies, messageCount, photoCount, unreadTotal } from './db'
-import { completeProfile, gotoSettled, register, uniqueEmail, uniqueName } from './helpers'
+import {
+  completeProfile,
+  gotoSettled,
+  logout,
+  register,
+  uniqueEmail,
+  uniqueName,
+} from './helpers'
 
 const MAILPIT = process.env.MAILPIT_URL ?? 'http://mailpit:8025'
 const APP_ORIGIN = new URL(process.env.E2E_BASE_URL ?? 'http://localhost:5173').origin
@@ -55,10 +62,37 @@ async function otherUser(browser: import('@playwright/test').Browser, name: stri
   return { context, page }
 }
 
-/** POST as the signed-in owner of `page`, using its cookie jar. */
+/** POST as the signed-in owner of `page`, using its cookie jar.
+ *
+ *  The CSRF header has to be set here, not inherited. `page.request` shares the
+ *  context's cookies but bypasses `src/api/client.ts`, which is what normally
+ *  attaches `X-CSRF-Token` — so every mutation 403s without this.
+ */
 async function postAs(page: Page, path: string, body?: unknown) {
-  const response = await page.request.post(path, { data: body })
+  const response = await page.request.post(path, { data: body, headers: await csrfHeaders(page) })
   return { status: response.status(), body: await response.json().catch(() => null) }
+}
+
+/** PATCH as the signed-in owner of `page`. */
+async function patchAs(page: Page, path: string, body?: unknown) {
+  const response = await page.request.patch(path, { data: body, headers: await csrfHeaders(page) })
+  return response.status()
+}
+
+/** The session's CSRF token, fetched once per page.
+ *
+ *  The token is fixed for the life of a session, so re-reading /users/me before
+ *  every mutation doubles the round trips — and these tests seed 55 messages in
+ *  a row, which is enough extra load to push the suite past its budget.
+ */
+const csrfCache = new WeakMap<Page, string>()
+
+async function csrfHeaders(page: Page): Promise<Record<string, string>> {
+  const cached = csrfCache.get(page)
+  if (cached) return { 'X-CSRF-Token': cached }
+  const token = (await me(page)).csrf_token as string
+  csrfCache.set(page, token)
+  return { 'X-CSRF-Token': token }
 }
 
 async function me(page: Page) {
@@ -104,6 +138,10 @@ test('a magic link signs you in and lands you on the app, not a 404', async ({ b
   await register(setup, { name: uniqueName('Link Signin'), email })
   await completeProfile(setup, { role: 'Software developer', skill: 'Python' })
 
+  // Sign out first: /forgot-password is behind RedirectIfAuthed, so a signed-in
+  // visitor is bounced to the feed and the form never renders. The account still
+  // exists, which is all the endpoint cares about.
+  await logout(setup)
   await gotoSettled(setup, '/forgot-password')
   await setup.getByLabel('Email').fill(email)
   await setup.getByRole('button', { name: /send me a link/i }).click()
@@ -137,6 +175,7 @@ test('a magic link works exactly once', async ({ browser }) => {
   const email = uniqueEmail('magic-link-once')
   await register(setup, { name: uniqueName('Single Use'), email })
 
+  await logout(setup)
   await gotoSettled(setup, '/forgot-password')
   await setup.getByLabel('Email').fill(email)
   await setup.getByRole('button', { name: /send me a link/i }).click()
@@ -149,11 +188,14 @@ test('a magic link works exactly once', async ({ browser }) => {
   expect((await me(first)).email).toBe(email)
 
   // The same token again must be refused. Guards the row-lock fix in §11.
+  // A refused token leaves the visitor signed out, so this asserts the 401
+  // rather than going through me(), which requires a live session.
   const secondContext = await browser.newContext()
   const second = await secondContext.newPage()
   await second.goto(link)
   await second.waitForLoadState('domcontentloaded')
-  expect((await me(second)).email).not.toBe(email)
+  const replayed = await second.request.get('/api/v1/users/me')
+  expect(replayed.status(), 'a magic link token must work exactly once').toBe(401)
 
   await setupContext.close()
   await firstContext.close()
@@ -182,16 +224,14 @@ test('the unread message count agrees with the thread list and the database', as
   })
   expect(request.status).toBe(201)
 
-  const accepted = await receiver.request.patch(`/api/v1/connections/${request.body.id}`, {
-    data: { action: 'accept' },
+  const accepted = await patchAs(receiver, `/api/v1/connections/${request.body.id}`, {
+    action: 'accept',
   })
-  expect(accepted.status()).toBe(200)
+  expect(accepted).toBe(200)
 
-  const threadResponse = await receiver.request.post(
-    `/api/v1/connections/${request.body.id}/thread`,
-  )
-  expect(threadResponse.status()).toBe(201)
-  const threadId = (await threadResponse.json()).id
+  const threadResponse = await postAs(receiver, `/api/v1/connections/${request.body.id}/thread`)
+  expect(threadResponse.status).toBe(201)
+  const threadId = threadResponse.body.id
 
   // Three messages, all unread for the receiver: the receiver never opens the
   // thread, because opening it marks everything read.
@@ -238,8 +278,12 @@ test('the unread message count agrees with the thread list and the database', as
 // ─── B19: no socket for a signed-out visitor ────────────────────────────────
 
 test('a signed-out visitor opens no websocket', async ({ page }) => {
+  // Only the app's socket. The dev server runs its own HMR socket at the root
+  // (`ws://host/?token=…`) and that one is not the application's business.
   const sockets: string[] = []
-  page.on('websocket', (socket) => sockets.push(socket.url()))
+  page.on('websocket', (socket) => {
+    if (socket.url().includes('/api/v1/ws')) sockets.push(socket.url())
+  })
 
   await page.goto('/')
   await expect(page.getByRole('link', { name: /sign up/i }).first()).toBeVisible()
@@ -276,11 +320,9 @@ test('opening a conversation logs no react hook errors', async ({ browser }) => 
   const bMe = await me(b)
   const request = await postAs(a, '/api/v1/connections', { receiver_id: bMe.id })
   expect(request.status).toBe(201)
-  expect((await b.request.patch(`/api/v1/connections/${request.body.id}`, { data: { action: 'accept' } })).status()).toBe(200)
+  expect(await patchAs(b, `/api/v1/connections/${request.body.id}`, { action: 'accept' })).toBe(200)
 
-  const thread = await (
-    await a.request.post(`/api/v1/connections/${request.body.id}/thread`)
-  ).json()
+  const thread = (await postAs(a, `/api/v1/connections/${request.body.id}/thread`)).body
 
   const problems: string[] = []
   a.on('console', (message) => {
@@ -382,11 +424,9 @@ test('a long conversation can be scrolled back through its whole history', async
   const readerMe = await me(reader)
   const request = await postAs(sender, '/api/v1/connections', { receiver_id: readerMe.id })
   expect(request.status).toBe(201)
-  expect((await reader.request.patch(`/api/v1/connections/${request.body.id}`, { data: { action: 'accept' } })).status()).toBe(200)
+  expect(await patchAs(reader, `/api/v1/connections/${request.body.id}`, { action: 'accept' })).toBe(200)
 
-  const threadId = (
-    await (await reader.request.post(`/api/v1/connections/${request.body.id}/thread`)).json()
-  ).id
+  const threadId = (await postAs(reader, `/api/v1/connections/${request.body.id}/thread`)).body.id
 
   // Seeded through the API because clicking out 55 messages is not a test of
   // anything. Each one is a real persisted row.
@@ -432,6 +472,9 @@ test('a long conversation can be scrolled back through its whole history', async
 
   for (let attempt = 0; attempt <= pages; attempt += 1) {
     if ((await reader.getByText(oldest, { exact: true }).count()) > 0) break
+    // The control unmounts once there is nothing older left, so stop rather
+    // than waiting on a button that is never coming back.
+    if ((await loader.count()) === 0) break
     await loader.click()
     await reader.waitForTimeout(300)
   }

@@ -26,6 +26,9 @@ set "CMD=%1"
 if "%CMD%"=="" set "CMD=dev"
 
 if "%CMD%"=="dev" goto dev
+if "%CMD%"=="tunnel" goto tunnel
+if "%CMD%"=="cloudflare" goto tunnel
+if "%CMD%"=="url" goto url
 if "%CMD%"=="build" goto build
 if "%CMD%"=="down" goto down
 if "%CMD%"=="logs" goto logs
@@ -36,6 +39,20 @@ goto help
 
 :dev
 %DOCKER_CMD% compose up --build
+goto end
+
+:tunnel
+%DOCKER_CMD% compose up -d --build
+if errorlevel 1 goto end
+REM Recreate the tunnel so its log holds only the URL from this run.
+%DOCKER_CMD% compose up -d --force-recreate --no-deps tunnel
+echo.
+echo [run.bat] Waiting for Cloudflare Tunnel to establish...
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\tunnel-url.ps1" -Docker "%DOCKER_CMD%" -WaitSeconds 60
+goto end
+
+:url
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\tunnel-url.ps1" -Docker "%DOCKER_CMD%"
 goto end
 
 :panel
@@ -68,13 +85,15 @@ goto end
 goto end
 
 :help
-echo Usage: run.bat [dev^|build^|down^|logs^|clean^|panel^|devcheck]
-echo   dev      - Build and start all services (default)
-echo   build    - Build images only
-echo   down     - Stop services
-echo   logs     - Follow logs
-echo   clean    - Stop and delete all data
-echo   panel    - Open the dev panel in your browser
+echo Usage: run.bat [dev^|tunnel^|url^|build^|down^|logs^|clean^|panel^|devcheck]
+echo   dev    - Build and start all services (default)
+echo   tunnel - Start stack in background and display live Cloudflare URL
+echo   url    - Display the active Cloudflare Tunnel URL
+echo   build  - Build images only
+echo   down   - Stop services
+echo   logs   - Follow logs
+echo   clean  - Stop and delete all data
+echo   panel  - Open the dev panel in your browser
 echo   devcheck - Test Adminer, Mailpit and the dev panel end to end
 
 :end

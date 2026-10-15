@@ -141,10 +141,15 @@ def score_match(viewer: ProfileView, candidate: ProfileView) -> MatchResult:
     )
 
 
-def sort_key(result: MatchResult, candidate_id: uuid.UUID) -> tuple[int, uuid.UUID]:
+def sort_key(score: int, candidate_id: uuid.UUID) -> tuple[int, uuid.UUID]:
     """Stable total order. A fuzzy tiebreak would let page 2 repeat rows from
-    page 1 — cursor pagination depends on this."""
-    return (-result.score, candidate_id)
+    page 1 — cursor pagination depends on this.
+
+    Takes the *score*, not the MatchResult, so the cursor can carry this exact
+    tuple. The encoder and the comparator then cannot disagree about the sign,
+    which is how `/matches` shipped with a cursor that filtered out every row.
+    """
+    return (-score, candidate_id)
 
 
 def max_possible_score() -> int:

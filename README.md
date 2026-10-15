@@ -21,15 +21,19 @@ Requires Docker Desktop (WSL2 backend supported).
 
 ```powershell
 .\run.bat              # build + start everything
+.\run.bat tunnel       # start locally and expose to public web via Cloudflare Tunnel
+.\run.bat url          # print the active Cloudflare Tunnel URL
 .\run.bat panel        # open the dev panel at http://localhost:5173/dev
 ```
 
 That's it. First build takes a few minutes (Python wheels, npm install). After
-that, `run.bat` is enough.
+that, `run.bat` is enough. For full Cloudflare Tunnel details, see [`docs/cloudflare.md`](docs/cloudflare.md).
 
 | Command | What it does |
 |---|---|
 | `run.bat` / `run.bat dev` | Build and start all services |
+| `run.bat tunnel` | Build and start all services with a public Cloudflare Tunnel URL |
+| `run.bat url` | Display the active Cloudflare Tunnel URL |
 | `run.bat build` | Build images only |
 | `run.bat down` | Stop services (keeps data) |
 | `run.bat clean` | Stop and delete all data |
@@ -126,11 +130,12 @@ rejected.
 | Auth | httpOnly cookie sessions + magic link, no third-party vendor |
 | Email (dev) | Mailpit — fake SMTP with a web inbox on `:8025` |
 | Storage | Profile photos as `bytea` blobs in Postgres |
-| Infra | Docker Compose, full stack, local only |
+| Infra | Docker Compose (dev) + single-image Dockerfile (production) |
 | Tests | pytest, Vitest + React Testing Library, Playwright |
 
-No production deploy and no third-party services. No budget, and a demo that
-breaks on hotel wifi is not worth having.
+Dev runs locally via Docker Compose. Production builds one image — FastAPI
+serves the built SPA — deployed to Render free tier with Neon Postgres. See
+[`docs/deploy.md`](docs/deploy.md).
 
 ### The six rules
 
@@ -155,9 +160,17 @@ so break them deliberately or not at all.
 
 ## Tests
 
+The backend tests use a second database, `bootcamp_connect_test`. A new
+database volume only has `bootcamp_connect`, so create the test one once
+(without it every backend test errors with "database does not exist"):
+
+```powershell
+docker compose exec -T db psql -U bootcamp -d bootcamp_connect -c "CREATE DATABASE bootcamp_connect_test"
+```
+
 ```powershell
 docker compose exec -T backend pytest tests                      # 240 passed
-docker compose exec -T frontend npx vitest run                   # 26 passed
+docker compose exec -T frontend npx vitest run                   # 39 passed
 docker compose exec -T frontend npx tsc --noEmit                 # clean
 docker compose exec -T frontend npx playwright test              # 11 passed
 ```
@@ -187,6 +200,7 @@ docker compose exec -T frontend npx playwright test -c playwright.videos.config.
 |---|---|
 | **[`AGENTS.md`](AGENTS.md)** | **Read this first.** Tech stack, conventions, the six non-negotiable product rules, how to work. |
 | **[`handoff.md`](handoff.md)** | Live build state, known bugs, and the gotchas that will cost you an hour. |
+| [`docs/deploy.md`](docs/deploy.md) | How to run the dev stack and deploy to Render. |
 | [`PRD.md`](PRD.md) | Who the app serves, what it does, what is in and out of scope, success criteria. |
 | [`roadmap.md`](roadmap.md) | The nine features in dependency order, each with a finish line, plus the cut line. |
 | [`specs/`](specs/) | One document per feature, each ending with an *As built* section. |

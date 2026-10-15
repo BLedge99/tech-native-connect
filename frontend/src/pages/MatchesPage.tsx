@@ -1,6 +1,6 @@
 /** Matches list, filters in the URL, and the profile detail view. specs/04 §8. */
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { connections as connApi, matches as matchesApi, users as usersApi } from '../api/client'
 import { ApiError } from '../api/client'
@@ -12,23 +12,37 @@ import { useQuery } from '../hooks/useQuery'
 export function MatchesPage() {
   const [params, setParams] = useSearchParams()
   const [reloadKey, bumpReload] = useState(0)
+  const [extra, setExtra] = useState<Match[]>([])
+  const [nextCursor, setNextCursor] = useState<string | null>(null)
+  const [loadingMore, setLoadingMore] = useState(false)
+  const [moreError, setMoreError] = useState<string | null>(null)
   const role = params.get('role') ?? ''
   const skill = params.get('skill') ?? ''
   const course = params.get('course_id') ?? ''
   const interest = params.get('interest') ?? ''
 
-  const query = useQuery(
-    () =>
-      matchesApi.list({
-        limit: 20,
-        role: role || undefined,
-        skill: skill || undefined,
-        course_id: course || undefined,
-        interest: interest || undefined,
-      }),
-    [role, skill, course, interest, reloadKey],
-  )
+  const filters = {
+    limit: 20,
+    role: role || undefined,
+    skill: skill || undefined,
+    course_id: course || undefined,
+    interest: interest || undefined,
+  }
+  const query = useQuery(() => matchesApi.list(filters), [
+    role,
+    skill,
+    course,
+    interest,
+    reloadKey,
+  ])
   const courses = useQuery(() => usersApi.courses(), [])
+
+  // A filter change is a different result set, so page 2 of the old one is
+  // meaningless.
+  useEffect(() => {
+    setExtra([])
+    setNextCursor(query.data?.next_cursor ?? null)
+  }, [query.data])
 
   const setFilter = (key: string, value: string) => {
     const next = new URLSearchParams(params)
@@ -37,7 +51,24 @@ export function MatchesPage() {
     setParams(next, { replace: true })
   }
 
-  const items = (query.data?.items ?? []) as Match[]
+  const items = [...((query.data?.items ?? []) as Match[]), ...extra]
+
+  // Without this the cursor is a working API nobody uses: a cohort of more than
+  // twenty leaves the rest unreachable.
+  const loadMore = async () => {
+    if (!nextCursor || loadingMore) return
+    setLoadingMore(true)
+    setMoreError(null)
+    try {
+      const page = await matchesApi.list({ ...filters, cursor: nextCursor })
+      setExtra((current) => [...current, ...page.items])
+      setNextCursor(page.next_cursor)
+    } catch {
+      setMoreError("Couldn't load more matches.")
+    } finally {
+      setLoadingMore(false)
+    }
+  }
 
   return (
     <div className="space-y-6">
@@ -122,6 +153,17 @@ export function MatchesPage() {
           />
         ))}
       </div>
+
+      {moreError && <p role="alert" className="text-sm text-red-700">{moreError}</p>}
+      {nextCursor && (
+        <button
+          className="text-sm text-brand-700 underline disabled:opacity-50"
+          onClick={() => void loadMore()}
+          disabled={loadingMore}
+        >
+          {loadingMore ? 'Loading…' : 'Load more people'}
+        </button>
+      )}
     </div>
   )
 }

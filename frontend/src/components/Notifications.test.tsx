@@ -17,8 +17,9 @@
  */
 
 import { act, render, screen, waitFor } from '@testing-library/react'
-import { beforeEach, expect, type Mock, test, vi } from 'vitest'
 import { MemoryRouter } from 'react-router-dom'
+import { beforeEach, expect, type Mock, test, vi } from 'vitest'
+
 import { SessionContext, type SessionValue } from '../hooks/session'
 
 const socket = vi.hoisted(() => ({
@@ -202,10 +203,10 @@ test('the bell reflects the unread count and nothing else is needed for it to wo
   )
 
   // The badge and the accessible name must agree — they come from the same
-  // unread_count, which is the promise specs/07 §6 makes.
+  // unread_count, which is the promise specs/07 §6 makes. Awaited, because the
+  // count arrives from an effect's fetch rather than the first render.
   const button = await screen.findByRole('button', { name: /Notifications, 3 unread/ })
   expect(button).toBeInTheDocument()
-
 
   await userClick(button)
   await waitFor(() => expect(screen.getByText('Alice wants to connect')).toBeInTheDocument())

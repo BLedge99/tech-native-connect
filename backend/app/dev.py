@@ -25,11 +25,29 @@ if not _VIDEOS_DIR.exists():
 @router.get("/videos/{filename}")
 async def serve_video(filename: str):
     """Serve a single evidence video by filename."""
-    # Prevent path traversal — only serve files that exist in videos/
-    file_path = _VIDEOS_DIR / filename
-    if not file_path.exists() or not file_path.is_file():
-        return {"error": "not_found"}, 404
-    return FileResponse(file_path, media_type="video/mp4")
+    path = _inside(filename)
+    if path is None:
+        from app.errors import NotFound
+
+        raise NotFound("No such video.")
+    return FileResponse(path, media_type="video/mp4")
+
+
+def _inside(filename: str) -> Path | None:
+    """Resolve `filename` inside _VIDEOS_DIR, or None.
+
+    Containment, not an `.exists()` on an un-resolved join. Starlette's path
+    converter excludes `/` but not `\\`, so `..\\secret.txt` reaches this
+    handler intact and joins straight out of the directory on Windows.
+
+    The error is the standard envelope (specs/00_conventions.md §2) via NotFound,
+    not an ad-hoc `{"error": "not_found"}` dict.
+    """
+    root = _VIDEOS_DIR.resolve()
+    candidate = (root / filename).resolve()
+    if not candidate.is_relative_to(root) or not candidate.is_file():
+        return None
+    return candidate
 
 
 @router.get("/videos")
@@ -38,6 +56,6 @@ async def list_videos():
     if not _VIDEOS_DIR.exists():
         return {"videos": []}
     videos = sorted(
-        f.name for f in _VIDEOS_DIR.iterdir() if f.suffix == ".mp4"
+        f.name for f in _VIDEOS_DIR.iterdir() if f.suffix == ".mp4" and f.is_file()
     )
     return {"videos": videos}
